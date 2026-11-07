@@ -1,0 +1,423 @@
+{
+  "plan_version": 1,
+  "summary": "Implement the finalized Chrome taskbar design in a gated sequence: establish prerequisites, create the solution and worker protocol, prove real-Chrome feasibility, then add safe interaction and acceptance coverage.",
+  "assumptions": [
+    "The architecture is the pinned scope: no extension, Native Messaging, elevation, packaging, deployment, or persistence work is added.",
+    "Every code task ends with its declared build or test command green; if stopped mid-task, revert only that task's unverified edits and retain the prior green boundary.",
+    "A failed or blocked AC-01 through AC-04 PoC retains evidence and stops downstream implementation; the T003 green build remains the safe residual state."
+  ],
+  "tasks": [
+    {
+      "id": "T001",
+      "title": "Record prerequisites and PoC evidence format",
+      "intent": "Implement and verify Record prerequisites and PoC evidence format according to the referenced finalized architecture sections.",
+      "design_refs": [
+        "1. 決定事項",
+        "4. モジュールと技術",
+        "9. ホバーとポップアップ",
+        "11. 実装前 PoC と受け入れ条件",
+        "12. Out of Scope"
+      ],
+      "depends_on": [],
+      "changes": [
+        {
+          "path": "docs/plans/chrome-taskbar-poc-evidence.json",
+          "kind": "add"
+        },
+        {
+          "path": "docs/plans/chrome-taskbar-poc-evidence.schema.json",
+          "kind": "add"
+        }
+      ],
+      "acceptance": [
+        "Evidence has Chrome version, Windows build, DPI, language, and independent AC-01 through AC-04 rows.",
+        "Every row is Pass, Fail, or Blocked; Pass rows include expected count, observed count, duration, and read-side-effect observation.",
+        "The record states no extension, Native Messaging, elevation, or Chrome setting change was used.",
+        "A missing net10.0 SDK records Blocked and prevents later tasks.",
+        "Stopping after T001 leaves only validator-green evidence files and no running process; discard an incomplete evidence row before handoff."
+      ],
+      "verify": [
+        {
+          "command": "pwsh -NoProfile -File docs/plans/validate-chrome-taskbar-plan.ps1 -PlanPath docs/plans/chrome-taskbar-plan.json -DesignPath docs/plans/chrome-taskbar-architecture.md -EvidencePath docs/plans/chrome-taskbar-poc-evidence.json -RequirePocEvidence",
+          "expect_exit_code": 0
+        }
+      ],
+      "estimate_rounds": 1
+    },
+    {
+      "id": "T002",
+      "title": "Create the net10 WPF, worker, and contract solution",
+      "intent": "Implement and verify Create the net10 WPF, worker, and contract solution according to the referenced finalized architecture sections.",
+      "design_refs": [
+        "3. 全体構成",
+        "4. モジュールと技術",
+        "6. ウィンドウ一覧と識別",
+        "7. タブ取得",
+        "10. Worker と IPC のライフサイクル"
+      ],
+      "depends_on": [
+        "T001"
+      ],
+      "changes": [
+        {
+          "path": "ChromeTaskbar.sln",
+          "kind": "add"
+        },
+        {
+          "path": "src/ChromeTaskbar.Contracts/ChromeTaskbar.Contracts.csproj",
+          "kind": "add"
+        },
+        {
+          "path": "src/ChromeTaskbar.App/ChromeTaskbar.App.csproj",
+          "kind": "add"
+        },
+        {
+          "path": "src/ChromeTaskbar.UiaWorker/ChromeTaskbar.UiaWorker.csproj",
+          "kind": "add"
+        },
+        {
+          "path": "tests/ChromeTaskbar.Tests/ChromeTaskbar.Tests.csproj",
+          "kind": "add"
+        }
+      ],
+      "acceptance": [
+        "The solution builds App, UiaWorker, Contracts, and test projects targeting net10.0-windows.",
+        "Contracts represent WindowKey, WorkerEpoch, SnapshotId, requestId, TabToken, TabSnapshot, TabEntry, availability, and result status without sending AutomationElement over IPC.",
+        "Tests prove WindowKey needs HWND, PID, process start time, and generation, and tab identity cannot be title or display order.",
+        "Stopping after T002 leaves a buildable solution and passing Contracts tests; revert incomplete scaffold edits before handoff."
+      ],
+      "verify": [
+        {
+          "command": "pwsh -NoProfile -Command \"dotnet restore ChromeTaskbar.sln; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; dotnet build ChromeTaskbar.sln --no-restore\"",
+          "expect_exit_code": 0
+        },
+        {
+          "command": "dotnet test tests/ChromeTaskbar.Tests/ChromeTaskbar.Tests.csproj --no-restore --filter \"FullyQualifiedName~Contracts\"",
+          "expect_exit_code": 0
+        }
+      ],
+      "estimate_rounds": 2
+    },
+    {
+      "id": "T003",
+      "title": "Implement protocol, worker isolation, and bounded UIA probe",
+      "intent": "Implement and verify Implement protocol, worker isolation, and bounded UIA probe according to the referenced finalized architecture sections.",
+      "design_refs": [
+        "1. 決定事項",
+        "3. 全体構成",
+        "4. モジュールと技術",
+        "7. タブ取得",
+        "8. タブ選択とウィンドウ前面化",
+        "9. ホバーとポップアップ",
+        "10. Worker と IPC のライフサイクル",
+        "11. 実装前 PoC と受け入れ条件"
+      ],
+      "depends_on": [
+        "T002"
+      ],
+      "changes": [
+        {
+          "path": "src/ChromeTaskbar.Contracts/Protocol.cs",
+          "kind": "add"
+        },
+        {
+          "path": "src/ChromeTaskbar.App/UiaWorkerBroker.cs",
+          "kind": "add"
+        },
+        {
+          "path": "src/ChromeTaskbar.UiaWorker/PipeServer.cs",
+          "kind": "add"
+        },
+        {
+          "path": "src/ChromeTaskbar.UiaWorker/ChromeUiaTabProvider.cs",
+          "kind": "add"
+        },
+        {
+          "path": "tests/ChromeTaskbar.Tests/ProtocolAndUiaProbeTests.cs",
+          "kind": "add"
+        }
+      ],
+      "acceptance": [
+        "Hello/ReadTabs/SelectTab/Invalidate/Cancel/Result enforce protocolVersion, WorkerEpoch, requestId, decimal-string U64/PID limits, MaxFrameBytes, and ProtocolError disconnects.",
+        "The broker owns a random pipe and hidden child worker, checks its PID, and invalidates epochs/tokens on restart.",
+        "UIA runs on one windowless MTA thread; breadth-first traversal begins from HWND, excludes Document descendants, and returns Incomplete without partial tabs at every specified traversal/title/tab limit.",
+        "Select verifies epoch, WindowKey, SnapshotId, token, RuntimeId, strip membership, supported pattern, and post-select state; it never rebinds by title or position.",
+        "Stopping after T003 leaves a buildable solution and passing ProtocolAndUiaProbe tests; terminate test Workers and dispose named pipes before handoff."
+      ],
+      "verify": [
+        {
+          "command": "dotnet test tests/ChromeTaskbar.Tests/ChromeTaskbar.Tests.csproj --no-restore --filter \"FullyQualifiedName~Protocol|FullyQualifiedName~UiaProbe\"",
+          "expect_exit_code": 0
+        }
+      ],
+      "estimate_rounds": 2
+    },
+    {
+      "id": "T004",
+      "title": "Execute and gate on real-Chrome PoC AC-01 through AC-04",
+      "intent": "Implement and verify Execute and gate on real-Chrome PoC AC-01 through AC-04 according to the referenced finalized architecture sections.",
+      "design_refs": [
+        "1. 決定事項",
+        "7. タブ取得",
+        "8. タブ選択とウィンドウ前面化",
+        "11. 実装前 PoC と受け入れ条件",
+        "12. Out of Scope"
+      ],
+      "depends_on": [
+        "T003"
+      ],
+      "changes": [
+        {
+          "path": "docs/plans/chrome-taskbar-poc-evidence.json",
+          "kind": "add"
+        }
+      ],
+      "acceptance": [
+        "Each comma-separated condition in AC-01 through AC-04 has a separate evidence row with versions, DPI, language, window state, expected/observed tabs, duration, and Pass/Fail/Blocked.",
+        "Read Pass rows have equal expected/observed counts and no restore, foreground, or group expansion.",
+        "Selection Pass rows prove UIA selected state and visually foregrounded selected tab; stale tokens are rejected.",
+        "Any Fail/Blocked changes poc_gate to Fail/Blocked and stops CT-05 through CT-08.",
+        "Stopping after T004 leaves immutable PoC evidence and the T003 green build; no downstream code starts unless poc_gate is Pass."
+      ],
+      "verify": [
+        {
+          "command": "pwsh -NoProfile -File docs/plans/validate-chrome-taskbar-plan.ps1 -PlanPath docs/plans/chrome-taskbar-plan.json -DesignPath docs/plans/chrome-taskbar-architecture.md -EvidencePath docs/plans/chrome-taskbar-poc-evidence.json -RequirePocGatePass",
+          "expect_exit_code": 0
+        }
+      ],
+      "estimate_rounds": 2
+    },
+    {
+      "id": "T005",
+      "title": "Implement Chrome window registry and toggle activation",
+      "intent": "Implement and verify Implement Chrome window registry and toggle activation according to the referenced finalized architecture sections.",
+      "design_refs": [
+        "2. ユーザー向け動作",
+        "5. vscode-selector の流用範囲",
+        "6. ウィンドウ一覧と識別",
+        "8. タブ選択とウィンドウ前面化"
+      ],
+      "depends_on": [
+        "T004"
+      ],
+      "changes": [
+        {
+          "path": "src/ChromeTaskbar.App/Win32WindowEnumerator.cs",
+          "kind": "add"
+        },
+        {
+          "path": "src/ChromeTaskbar.App/ChromeWindowFilter.cs",
+          "kind": "add"
+        },
+        {
+          "path": "src/ChromeTaskbar.App/WindowRegistry.cs",
+          "kind": "add"
+        },
+        {
+          "path": "src/ChromeTaskbar.App/WindowActivator.cs",
+          "kind": "add"
+        },
+        {
+          "path": "tests/ChromeTaskbar.Tests/WindowRegistryAndActivatorTests.cs",
+          "kind": "add"
+        }
+      ],
+      "acceptance": [
+        "Only visible, non-owned, non-tool, non-cloaked Chrome_WidgetWin_1 windows with executable chrome.exe are listed; minimized windows remain listed.",
+        "Registry keys include HWND, PID, process start time, and generation; disappearance invalidates tabs and first-seen order/duplicate labels stay stable.",
+        "A revalidated already-foreground non-minimized target minimizes; background/minimized target restores and foregrounds; IsIconic/GetForegroundWindow confirms each outcome.",
+        "Failure is observable and UI-thread activation has no Sleep or long retry.",
+        "Stopping after T005 leaves a buildable solution and passing WindowRegistryAndActivator tests; failed activation creates no retry loop or persistent state."
+      ],
+      "verify": [
+        {
+          "command": "dotnet test tests/ChromeTaskbar.Tests/ChromeTaskbar.Tests.csproj --no-restore --filter \"FullyQualifiedName~WindowRegistry|FullyQualifiedName~WindowActivator|FullyQualifiedName~ChromeWindowFilter\"",
+          "expect_exit_code": 0
+        }
+      ],
+      "estimate_rounds": 2
+    },
+    {
+      "id": "T006",
+      "title": "Implement cache, deadline, stale-response, and worker-recovery behavior",
+      "intent": "Implement and verify Implement cache, deadline, stale-response, and worker-recovery behavior according to the referenced finalized architecture sections.",
+      "design_refs": [
+        "4. モジュールと技術",
+        "6. ウィンドウ一覧と識別",
+        "7. タブ取得",
+        "9. ホバーとポップアップ",
+        "10. Worker と IPC のライフサイクル",
+        "11. 実装前 PoC と受け入れ条件"
+      ],
+      "depends_on": [
+        "T005"
+      ],
+      "changes": [
+        {
+          "path": "src/ChromeTaskbar.App/UiaWorkerBroker.cs",
+          "kind": "modify"
+        },
+        {
+          "path": "src/ChromeTaskbar.App/TabSnapshotCache.cs",
+          "kind": "add"
+        },
+        {
+          "path": "src/ChromeTaskbar.App/WindowRegistry.cs",
+          "kind": "modify"
+        },
+        {
+          "path": "tests/ChromeTaskbar.Tests/UiaWorkerBrokerTests.cs",
+          "kind": "add"
+        },
+        {
+          "path": "tests/ChromeTaskbar.Tests/TabSnapshotCacheTests.cs",
+          "kind": "add"
+        }
+      ],
+      "acceptance": [
+        "Read/select enforce deadlines before work, stop/recreate hung workers, and invalidate epoch/cache/token state.",
+        "Epoch, requestId, generation, deadline, and popup-generation mismatches are discarded without reopening a popup or overwriting a current error.",
+        "Cache obeys CacheWindowLimit/CacheTtl; stale display is non-selectable until a fresh snapshot confirms it.",
+        "CacheWindowLimit and CacheTtl boundaries are covered at T-1/T/T+1; only an open popup refreshes, latest hover reads replace old ones, Select has priority, and Cancel affects only unstarted reads/UI application.",
+        "Stopping after T006 leaves a buildable solution and passing UiaWorkerBroker and TabSnapshotCache tests; dispose Workers, pipes, cache, and queued reads before handoff."
+      ],
+      "verify": [
+        {
+          "command": "dotnet test tests/ChromeTaskbar.Tests/ChromeTaskbar.Tests.csproj --no-restore --filter \"FullyQualifiedName~UiaWorkerBroker|FullyQualifiedName~TabSnapshotCache\"",
+          "expect_exit_code": 0
+        }
+      ],
+      "estimate_rounds": 2
+    },
+    {
+      "id": "T007",
+      "title": "Implement WPF taskbar, hover state machine, and bounded popup",
+      "intent": "Implement and verify Implement WPF taskbar, hover state machine, and bounded popup according to the referenced finalized architecture sections.",
+      "design_refs": [
+        "2. ユーザー向け動作",
+        "4. モジュールと技術",
+        "5. vscode-selector の流用範囲",
+        "6. ウィンドウ一覧と識別",
+        "7. タブ取得",
+        "9. ホバーとポップアップ",
+        "11. 実装前 PoC と受け入れ条件"
+      ],
+      "depends_on": [
+        "T006"
+      ],
+      "changes": [
+        {
+          "path": "src/ChromeTaskbar.App/MainWindow.xaml",
+          "kind": "add"
+        },
+        {
+          "path": "src/ChromeTaskbar.App/TaskbarViewModel.cs",
+          "kind": "add"
+        },
+        {
+          "path": "src/ChromeTaskbar.App/HoverController.cs",
+          "kind": "add"
+        },
+        {
+          "path": "src/ChromeTaskbar.App/TabPopupViewModel.cs",
+          "kind": "add"
+        },
+        {
+          "path": "tests/ChromeTaskbar.Tests/HoverAndPopupTests.cs",
+          "kind": "add"
+        }
+      ],
+      "acceptance": [
+        "Idle/Waiting/Open/Closing uses a monotonic clock and matching WindowKey, hover generation, and pointer state; it observes every HoverDelay/PopupCloseGrace boundary.",
+        "A-to-B restarts timing, button-to-popup movement preserves interaction, and Esc/outside click/selection/window click/target disappearance close the single popup.",
+        "Hover never restores, foregrounds, selects, expands groups, or transfers focus; Unavailable/Incomplete is visibly distinct from zero tabs.",
+        "Popup is virtualized/scrollable and constrained to target-monitor work area using DIP/screen conversion.",
+        "WinEventDebounce, WinEventMaxWait, VisiblePollInterval, MinimizedPollInterval, PopupRefreshInterval, and Backoff each have T-1/T/T+1 tests with source tick/request trace.",
+        "Stopping after T007 leaves a buildable solution and passing HoverAndPopup tests; dispose timers, event subscriptions, popup refresh, and UI state before handoff."
+      ],
+      "verify": [
+        {
+          "command": "dotnet test tests/ChromeTaskbar.Tests/ChromeTaskbar.Tests.csproj --no-restore --filter \"FullyQualifiedName~HoverController|FullyQualifiedName~TabPopupViewModel|FullyQualifiedName~LayoutMath\"",
+          "expect_exit_code": 0
+        }
+      ],
+      "estimate_rounds": 2
+    },
+    {
+      "id": "T008",
+      "title": "Compose explicit tab-selection integration",
+      "intent": "Implement and verify the explicit tab-click orchestration path, keeping selection confirmation and failure reporting separate from broad acceptance evidence.",
+      "design_refs": [
+        "2. ユーザー向け動作",
+        "6. ウィンドウ一覧と識別",
+        "7. タブ取得",
+        "8. タブ選択とウィンドウ前面化",
+        "9. ホバーとポップアップ",
+        "10. Worker と IPC のライフサイクル"
+      ],
+      "depends_on": [
+        "T007"
+      ],
+      "changes": [
+        {
+          "path": "src/ChromeTaskbar.App/TaskbarViewModel.cs",
+          "kind": "modify"
+        },
+        {
+          "path": "src/ChromeTaskbar.App/TabPopupViewModel.cs",
+          "kind": "modify"
+        },
+        {
+          "path": "src/ChromeTaskbar.App/WindowActivator.cs",
+          "kind": "modify"
+        },
+        {
+          "path": "tests/ChromeTaskbar.Tests/TabSelectionIntegrationTests.cs",
+          "kind": "add"
+        }
+      ],
+      "acceptance": [
+        "Tab click cancels hover, revalidates WindowKey, restores/foregrounds without the minimize toggle, then sends matching epoch/snapshot/token/deadline SelectTab.",
+        "Only worker post-select confirmation plus main foreground confirmation closes as Success; every other Result preserves/reports failure and never auto-resends or rebinds by title/position.",
+        "Focused integration tests cover successful selection, foreground failure, stale epoch/snapshot/token rejection, cancellation, and every Result-to-UI mapping for the selection path.",
+        "Stopping after T008 leaves a buildable solution and passing TabSelectionIntegration tests; no stale selection is resent and all Worker, scheduler, and popup resources used by the tests are disposed."
+      ],
+      "verify": [
+        {
+            "command": "dotnet test tests/ChromeTaskbar.Tests/ChromeTaskbar.Tests.csproj --no-restore --filter \"FullyQualifiedName~TabSelectionIntegration\"",
+          "expect_exit_code": 0
+        }
+      ],
+      "estimate_rounds": 2
+    },
+    {
+      "id": "T009",
+      "title": "Run bounded acceptance and exclusion verification",
+      "intent": "Implement and verify the final automated and manual acceptance evidence without changing the completed tab-selection orchestration.",
+      "design_refs": [
+        "2. ユーザー向け動作",
+        "6. ウィンドウ一覧と識別",
+        "7. タブ取得",
+        "9. ホバーとポップアップ",
+        "10. Worker と IPC のライフサイクル",
+        "11. 実装前 PoC と受け入れ条件",
+        "12. Out of Scope"
+      ],
+      "depends_on": ["T008"],
+      "changes": [
+        {"path":"tests/ChromeTaskbar.Tests/AcceptanceBoundaryTests.cs","kind":"add"},
+        {"path":"docs/plans/chrome-taskbar-acceptance-evidence.json","kind":"add"}
+      ],
+      "acceptance": [
+        "Tests cover every section-9 T-1/T/T+1 row, malformed integers, Incomplete without partial tabs, cancellation non-application, and restart token rejection.",
+        "Evidence independently records every comma-separated AC-05 through AC-12 condition with the fields required by the acceptance-evidence validator.",
+        "Evidence confirms every section-12 exclusion is false and no extension, Native Messaging, elevation, packaging, deployment, persistence, or Chrome setting change is introduced.",
+        "Stopping after T009 leaves a buildable solution, all tests green, validated acceptance evidence, and no Worker, scheduler, or popup process running."
+      ],
+      "verify": [
+        {"command":"pwsh -NoProfile -Command \"dotnet test tests/ChromeTaskbar.Tests/ChromeTaskbar.Tests.csproj --no-restore --filter 'FullyQualifiedName~AcceptanceBoundary'; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; & pwsh -NoProfile -File docs/plans/validate-chrome-taskbar-plan.ps1 -PlanPath docs/plans/chrome-taskbar-plan.json -DesignPath docs/plans/chrome-taskbar-architecture.md -EvidencePath docs/plans/chrome-taskbar-acceptance-evidence.json -RequireAcceptanceEvidence; exit $LASTEXITCODE\"","expect_exit_code":0}
+      ],
+      "estimate_rounds": 2
+    }
+  ]
+}

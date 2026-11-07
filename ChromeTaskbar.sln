@@ -1,0 +1,36 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ChromeTaskbar.Contracts", "src\ChromeTaskbar.Contracts\ChromeTaskbar.Contracts.csproj", "{8F9A2E11-64B2-4A53-92DF-A540F85411A1}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ChromeTaskbar.App", "src\ChromeTaskbar.App\ChromeTaskbar.App.csproj", "{B2F7C3D8-4E11-42D6-A8EF-9938A1C280C2}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ChromeTaskbar.UiaWorker", "src\ChromeTaskbar.UiaWorker\ChromeTaskbar.UiaWorker.csproj", "{C5E4A912-7D92-4E93-A650-2BE1A44A03D3}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ChromeTaskbar.Tests", "tests\ChromeTaskbar.Tests\ChromeTaskbar.Tests.csproj", "{D1A84F73-03A4-491C-AC2B-C3A3691B94E4}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{8F9A2E11-64B2-4A53-92DF-A540F85411A1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8F9A2E11-64B2-4A53-92DF-A540F85411A1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8F9A2E11-64B2-4A53-92DF-A540F85411A1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8F9A2E11-64B2-4A53-92DF-A540F85411A1}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B2F7C3D8-4E11-42D6-A8EF-9938A1C280C2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B2F7C3D8-4E11-42D6-A8EF-9938A1C280C2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B2F7C3D8-4E11-42D6-A8EF-9938A1C280C2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B2F7C3D8-4E11-42D6-A8EF-9938A1C280C2}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C5E4A912-7D92-4E93-A650-2BE1A44A03D3}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C5E4A912-7D92-4E93-A650-2BE1A44A03D3}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C5E4A912-7D92-4E93-A650-2BE1A44A03D3}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C5E4A912-7D92-4E93-A650-2BE1A44A03D3}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D1A84F73-03A4-491C-AC2B-C3A3691B94E4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D1A84F73-03A4-491C-AC2B-C3A3691B94E4}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D1A84F73-03A4-491C-AC2B-C3A3691B94E4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D1A84F73-03A4-491C-AC2B-C3A3691B94E4}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

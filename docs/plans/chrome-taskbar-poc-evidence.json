@@ -1,0 +1,260 @@
+{
+  "schema_version": 1,
+  "chrome_version": "Google Chrome 157.0.8103.38",
+  "windows_build": "Windows 26H2 build 26300",
+  "dpi": "144 DPI (150%)",
+  "language": "ja-JP",
+  "constraints": {
+    "chrome_extension": false,
+    "native_messaging": false,
+    "elevation": false,
+    "chrome_setting_change": false
+  },
+  "prerequisites": {
+    "net10_sdk_available": true,
+    "blocker": "None. AC-02-06 fixed by RawView traversal and re-measured Pass; all 16 rows Pass."
+  },
+  "poc_gate": "Pass",
+  "cases": [
+    {
+      "condition_id": "AC-01-01",
+      "ac": "AC-01",
+      "condition": "normal Chrome",
+      "window_state": "isolated visible Chrome profile/window",
+      "expected_tabs": 3,
+      "observed_tabs": 3,
+      "duration_ms": 826,
+      "result": "Pass",
+      "note": "Measured with an isolated Chrome fixture; UIA observed all three fixture tabs without changing Chrome settings.",
+      "read_side_effects": {
+        "restored": false,
+        "foregrounded": false,
+        "group_expanded": false
+      }
+    },
+    {
+      "condition_id": "AC-01-02",
+      "ac": "AC-01",
+      "condition": "multiple windows and profiles",
+      "window_state": "two isolated visible Chrome windows; one temporary profile per window",
+      "expected_tabs": 6,
+      "observed_tabs": 6,
+      "duration_ms": 9500,
+      "result": "Pass",
+      "note": "Normal-user unsandboxed fixture on 2026-11-06: Chrome 157.0.8103.38 launched two temporary --user-data-dir profiles with --no-first-run, --no-default-browser-check, --new-window, and three data URLs each. UIA found two visible fixture HWNDs (PIDs 95840 and 59100) and three TabItem controls in each. Read did not restore, foreground, or expand groups. Exact profile-path fixture processes were stopped and both temporary profiles deleted. Two prior Start-Process -Verb RunAs attempts were aborted by the platform before dispatch, with no child PID, exit, or UIA output; this passing measurement was not elevated and made no Chrome setting change.",
+      "read_side_effects": {
+        "restored": false,
+        "foregrounded": false,
+        "group_expanded": false
+      }
+    },
+    {
+      "condition_id": "AC-02-01",
+      "ac": "AC-02",
+      "condition": "background window",
+      "window_state": "background",
+      "expected_tabs": 3,
+      "observed_tabs": 3,
+      "duration_ms": 1925,
+      "result": "Pass",
+      "note": "Normal-user unsandboxed fixture on 2026-11-06: three distinct data URLs were passed as a PowerShell string array; the profile-matched browser command line retained three separately quoted URLs. One fixture HWND exposed three UIA TabItem controls while non-minimized. The fixture read only; no restore, foreground, or group expansion action occurred.",
+      "read_side_effects": {
+        "restored": false,
+        "foregrounded": false,
+        "group_expanded": false
+      }
+    },
+    {
+      "condition_id": "AC-02-02",
+      "ac": "AC-02",
+      "condition": "minimized window",
+      "window_state": "minimized",
+      "expected_tabs": 1,
+      "observed_tabs": 1,
+      "duration_ms": 1902,
+      "result": "Pass",
+      "note": "2026-11-06 normal-user isolated Chrome profile fixture (PID 96020, HWND 119475570): UIA read one TabItem while IsIconic was true. Exact GUID profile command-line matching cleaned every fixture PID/profile; the read did not restore, foreground, or expand a group.",
+      "read_side_effects": {
+        "restored": false,
+        "foregrounded": false,
+        "group_expanded": false
+      }
+    },
+    {
+      "condition_id": "AC-02-03",
+      "ac": "AC-02",
+      "condition": "off-screen window",
+      "window_state": "off-screen (MoveWindow to -32000,-32000, not minimized)",
+      "expected_tabs": 3,
+      "observed_tabs": 3,
+      "duration_ms": 214,
+      "result": "Pass",
+      "note": "2026-11-06 normal-user, non-elevated, isolated temporary --user-data-dir Chrome 157.0.8103.38 fixture (data: URLs, no extension/Native Messaging/setting change); measured through the existing ChromeUiaTabProvider (worker DLL) loaded from pwsh; fixture processes and profiles cleaned up by exact profile path. Window rect confirmed at -32000,-32000; worker ReadTabs returned Available with 3 of 3 tabs. IsIconic/foreground state unchanged before/after read; no restore, foreground or group expansion. Re-measured 2026-11-06 after the RawView change (ChromeUiaTabProvider now walks TreeWalker.RawViewWalker with cached properties; same result). duration_ms updated to the RawView re-measure.",
+      "read_side_effects": {
+        "restored": false,
+        "foregrounded": false,
+        "group_expanded": false
+      }
+    },
+    {
+      "condition_id": "AC-02-04",
+      "ac": "AC-02",
+      "condition": "many tabs",
+      "window_state": "visible, 30 tabs",
+      "expected_tabs": 30,
+      "observed_tabs": 30,
+      "duration_ms": 378,
+      "result": "Pass",
+      "note": "2026-11-06 normal-user, non-elevated, isolated temporary --user-data-dir Chrome 157.0.8103.38 fixture (data: URLs, no extension/Native Messaging/setting change); measured through the existing ChromeUiaTabProvider (worker DLL) loaded from pwsh; fixture processes and profiles cleaned up by exact profile path. Worker ReadTabs returned Available with 30 of 30 tabs (T1..T30) in ~257 ms (within 1000 node/750 ms limits). No restore, foreground or group expansion. Re-measured 2026-11-06 after the RawView change (ChromeUiaTabProvider now walks TreeWalker.RawViewWalker with cached properties; same result). duration_ms updated to the RawView re-measure.",
+      "read_side_effects": {
+        "restored": false,
+        "foregrounded": false,
+        "group_expanded": false
+      }
+    },
+    {
+      "condition_id": "AC-02-05",
+      "ac": "AC-02",
+      "condition": "pinned tabs",
+      "window_state": "visible, first tab pinned (context menu Pin during setup)",
+      "expected_tabs": 3,
+      "observed_tabs": 3,
+      "duration_ms": 546,
+      "result": "Pass",
+      "note": "2026-11-06 normal-user, non-elevated, isolated temporary --user-data-dir Chrome 157.0.8103.38 fixture (data: URLs, no extension/Native Messaging/setting change); measured through the existing ChromeUiaTabProvider (worker DLL) loaded from pwsh; fixture processes and profiles cleaned up by exact profile path. Pinned state confirmed by window title containing the pinned marker; worker returned 3 of 3 tabs including the pinned tab. Read caused no restore, foreground or group expansion. Re-measured 2026-11-06 after the RawView change (ChromeUiaTabProvider now walks TreeWalker.RawViewWalker with cached properties; same result). duration_ms updated to the RawView re-measure.",
+      "read_side_effects": {
+        "restored": false,
+        "foregrounded": false,
+        "group_expanded": false
+      }
+    },
+    {
+      "condition_id": "AC-02-06",
+      "ac": "AC-02",
+      "condition": "collapsed tab group",
+      "window_state": "visible; all 3 fixture tabs (AAA,BBB,CCC) in one unnamed tab group collapsed via header click during setup (Chrome auto-opens a 4th New Tab page)",
+      "expected_tabs": 4,
+      "observed_tabs": 4,
+      "duration_ms": 204,
+      "result": "Pass",
+      "note": "2026-11-06 normal-user, non-elevated, isolated temporary --user-data-dir Chrome 157.0.8103.38 fixture (data: URLs, no extension/Native Messaging/setting change); measured through the updated ChromeUiaTabProvider (worker DLL, RawView traversal) loaded from pwsh; fixture processes and profiles cleaned up by exact profile path. Group header UIA state Collapsed; ControlView FindAll(Descendants) returned only 1 TabItem, while the worker ReadTabs returned Available with 4 of 4 tabs (AAA, BBB, CCC in the collapsed group + the auto-created New Tab page). Also re-run with a 1-tab collapsed group (AAA collapsed): worker returned 3 of 3 (previously 2 of 3 under ControlView). Group state remained Collapsed after read; no restore, foreground change, or expansion. Fix: tab strip is now the Tab that directly parents a TabItem in RawView (RawView also exposes a hidden vertical-tab-bar Tab), leaf controls are not descended, and UIA properties are cached to stay within the 1000 node / 750 ms limits.",
+      "read_side_effects": {
+        "restored": false,
+        "foregrounded": false,
+        "group_expanded": false
+      }
+    },
+    {
+      "condition_id": "AC-03-01",
+      "ac": "AC-03",
+      "condition": "same-title tabs",
+      "window_state": "visible, three tabs all titled \"Same\" (bodies ONE/TWO/THREE)",
+      "expected_tabs": 3,
+      "observed_tabs": 3,
+      "duration_ms": 345,
+      "result": "Pass",
+      "note": "2026-11-06 normal-user, non-elevated, isolated temporary --user-data-dir Chrome 157.0.8103.38 fixture (data: URLs, no extension/Native Messaging/setting change); measured through the existing ChromeUiaTabProvider (worker DLL) loaded from pwsh; fixture processes and profiles cleaned up by exact profile path. Selected snapshot index 2 via worker Select -> Success; fresh UIA read shows only index 2 IsSelected; screenshot shows THREE. Select with a random SnapshotId -> Stale and after Invalidate(key) -> Stale. Re-measured 2026-11-06 after the RawView change (ChromeUiaTabProvider now walks TreeWalker.RawViewWalker with cached properties; same result). duration_ms updated to the RawView re-measure.",
+      "uia_selected": true,
+      "visual_foreground_tab": true,
+      "stale_token_rejected": true
+    },
+    {
+      "condition_id": "AC-03-02",
+      "ac": "AC-03",
+      "condition": "reordered tabs",
+      "window_state": "visible, tabs reordered by Ctrl+Shift+PgDn x2 (AAA,BBB,CCC -> BBB,CCC,AAA) after snapshot",
+      "expected_tabs": 3,
+      "observed_tabs": 3,
+      "duration_ms": 535,
+      "result": "Pass",
+      "note": "2026-11-06 normal-user, non-elevated, isolated temporary --user-data-dir Chrome 157.0.8103.38 fixture (data: URLs, no extension/Native Messaging/setting change); measured through the existing ChromeUiaTabProvider (worker DLL) loaded from pwsh; fixture processes and profiles cleaned up by exact profile path. Token of BBB (snapshot index 1, now index 0) selected via worker -> Success; UIA selected tab = BBB (not the tab now at old index 1, CCC); screenshot shows BBB. Random SnapshotId -> Stale, post-Invalidate -> Stale. Re-measured 2026-11-06 after the RawView change (ChromeUiaTabProvider now walks TreeWalker.RawViewWalker with cached properties; same result: count/selection index mapping unchanged). duration_ms updated to the RawView re-measure. Note: one transient empty read (null token) occurred on a first AC-03-02 attempt right after Chrome startup, likely the 750 ms limit under startup load (reported Incomplete, not a miscount); 3 subsequent runs passed 3/3 with Success.",
+      "uia_selected": true,
+      "visual_foreground_tab": true,
+      "stale_token_rejected": true
+    },
+    {
+      "condition_id": "AC-03-03",
+      "ac": "AC-03",
+      "condition": "moved tab",
+      "window_state": "visible, tab BBB moved to a new window (context menu) after snapshot",
+      "expected_tabs": 2,
+      "observed_tabs": 2,
+      "duration_ms": 406,
+      "result": "Pass",
+      "note": "2026-11-06 normal-user, non-elevated, isolated temporary --user-data-dir Chrome 157.0.8103.38 fixture (data: URLs, no extension/Native Messaging/setting change); measured through the existing ChromeUiaTabProvider (worker DLL) loaded from pwsh; fixture processes and profiles cleaned up by exact profile path. Snapshot had 3 tabs; after move original window has 2 tabs and new window has BBB. Select with BBB token on original window key -> Unavailable (no guess selection): original window still AAA selected, new window still BBB selected; screenshot of original shows AAA. Random SnapshotId -> Stale, post-Invalidate -> Stale. expected/observed = remaining tabs in original window (2/2). Re-measured 2026-11-06 after the RawView change (ChromeUiaTabProvider now walks TreeWalker.RawViewWalker with cached properties; same result). duration_ms updated to the RawView re-measure.",
+      "uia_selected": true,
+      "visual_foreground_tab": true,
+      "stale_token_rejected": true
+    },
+    {
+      "condition_id": "AC-03-04",
+      "ac": "AC-03",
+      "condition": "closed tab",
+      "window_state": "visible, tab BBB closed (UIA Close button Invoke) after snapshot",
+      "expected_tabs": 2,
+      "observed_tabs": 2,
+      "duration_ms": 636,
+      "result": "Pass",
+      "note": "2026-11-06 normal-user, non-elevated, isolated temporary --user-data-dir Chrome 157.0.8103.38 fixture (data: URLs, no extension/Native Messaging/setting change); measured through the existing ChromeUiaTabProvider (worker DLL) loaded from pwsh; fixture processes and profiles cleaned up by exact profile path. Snapshot had 3 tabs; after close window has 2. Select with closed BBB token -> Unavailable; selection unchanged (AAA) and count still 2; screenshot shows AAA. Random SnapshotId -> Stale, post-Invalidate -> Stale. expected/observed = remaining tabs (2/2). Re-measured 2026-11-06 after the RawView change (ChromeUiaTabProvider now walks TreeWalker.RawViewWalker with cached properties; same result). duration_ms updated to the RawView re-measure.",
+      "uia_selected": true,
+      "visual_foreground_tab": true,
+      "stale_token_rejected": true
+    },
+    {
+      "condition_id": "AC-04-01",
+      "ac": "AC-04",
+      "condition": "background window selection",
+      "window_state": "background (second isolated Chrome window in front)",
+      "expected_tabs": 3,
+      "observed_tabs": 3,
+      "duration_ms": 2559,
+      "result": "Pass",
+      "note": "2026-11-06 normal-user, non-elevated, isolated temporary --user-data-dir Chrome 157.0.8103.38 fixture (data: URLs, no extension/Native Messaging/setting change); measured through the existing ChromeUiaTabProvider (worker DLL) loaded from pwsh; fixture processes and profiles cleaned up by exact profile path. Before: target not foreground. Activate (SetForegroundWindow) -> GetForegroundWindow equals target; old token after Invalidate -> Stale; fresh read 3/3; Select tab CCC -> Success; UIA selected CCC, title CCC, fg=true, screenshot shows CCC.",
+      "uia_selected": true,
+      "visual_foreground_tab": true,
+      "stale_token_rejected": true
+    },
+    {
+      "condition_id": "AC-04-02",
+      "ac": "AC-04",
+      "condition": "minimized window selection",
+      "window_state": "minimized",
+      "expected_tabs": 3,
+      "observed_tabs": 3,
+      "duration_ms": 2529,
+      "result": "Pass",
+      "note": "2026-11-06 normal-user, non-elevated, isolated temporary --user-data-dir Chrome 157.0.8103.38 fixture (data: URLs, no extension/Native Messaging/setting change); measured through the existing ChromeUiaTabProvider (worker DLL) loaded from pwsh; fixture processes and profiles cleaned up by exact profile path. Before: IsIconic=true. ShowWindow(SW_RESTORE)+SetForegroundWindow -> IsIconic=false, foreground = target; old token after post-restore Invalidate -> Stale; fresh read 3/3; Select CCC -> Success; UIA selected CCC, screenshot shows CCC.",
+      "uia_selected": true,
+      "visual_foreground_tab": true,
+      "stale_token_rejected": true
+    },
+    {
+      "condition_id": "AC-04-03",
+      "ac": "AC-04",
+      "condition": "maximized window selection",
+      "window_state": "maximized, in background behind a second isolated Chrome window",
+      "expected_tabs": 3,
+      "observed_tabs": 3,
+      "duration_ms": 3024,
+      "result": "Pass",
+      "note": "2026-11-06 normal-user, non-elevated, isolated temporary --user-data-dir Chrome 157.0.8103.38 fixture (data: URLs, no extension/Native Messaging/setting change); measured through the existing ChromeUiaTabProvider (worker DLL) loaded from pwsh; fixture processes and profiles cleaned up by exact profile path. Before: IsZoomed=true, not foreground. Activate -> foreground = target, still maximized; old token after Invalidate -> Stale; fresh read 3/3; Select CCC -> Success; UIA selected CCC, title CCC. (Screenshot of maximized window was captured; downscaled thumbnail showed CCC.)",
+      "uia_selected": true,
+      "visual_foreground_tab": true,
+      "stale_token_rejected": true
+    },
+    {
+      "condition_id": "AC-04-04",
+      "ac": "AC-04",
+      "condition": "taskbar foreground selection and post-restore token invalidation",
+      "window_state": "minimized Chrome with a stand-in taskbar window (WinForms form \"TaskbarStandIn\") in foreground",
+      "expected_tabs": 3,
+      "observed_tabs": 3,
+      "duration_ms": 2638,
+      "result": "Pass",
+      "note": "2026-11-06 normal-user, non-elevated, isolated temporary --user-data-dir Chrome 157.0.8103.38 fixture (data: URLs, no extension/Native Messaging/setting change); measured through the existing ChromeUiaTabProvider (worker DLL) loaded from pwsh; fixture processes and profiles cleaned up by exact profile path. ChromeTaskbar.App has no UI yet, so a stand-in foreground window was used (limitation). Restore+foreground from stand-in -> GetForegroundWindow equals Chrome; token from the pre-restore snapshot after post-restore Invalidate -> Stale; fresh read 3/3; Select CCC -> Success; UIA selected CCC; screenshot shows CCC.",
+      "uia_selected": true,
+      "visual_foreground_tab": true,
+      "stale_token_rejected": true
+    }
+  ]
+}

@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "chrome-taskbar-poc-evidence.schema.json",
+  "title": "Chrome taskbar PoC evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "chrome_version",
+    "windows_build",
+    "dpi",
+    "language",
+    "constraints",
+    "prerequisites",
+    "poc_gate",
+    "cases"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "chrome_version": { "type": "string", "minLength": 1 },
+    "windows_build": { "type": "string", "minLength": 1 },
+    "dpi": { "type": "string", "minLength": 1 },
+    "language": { "type": "string", "minLength": 1 },
+    "constraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["chrome_extension", "native_messaging", "elevation", "chrome_setting_change"],
+      "properties": {
+        "chrome_extension": { "const": false },
+        "native_messaging": { "const": false },
+        "elevation": { "const": false },
+        "chrome_setting_change": { "const": false }
+      }
+    },
+    "prerequisites": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["net10_sdk_available", "blocker"],
+      "properties": {
+        "net10_sdk_available": { "type": "boolean" },
+        "blocker": { "type": "string" }
+      }
+    },
+    "poc_gate": { "enum": ["Pass", "Fail", "Blocked"] },
+    "cases": {
+      "type": "array",
+      "minItems": 16,
+      "maxItems": 16,
+      "items": { "$ref": "#/$defs/case" }
+    }
+  },
+  "$defs": {
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["condition_id", "ac", "condition", "window_state", "expected_tabs", "observed_tabs", "duration_ms", "result", "note"],
+      "properties": {
+        "condition_id": { "type": "string", "pattern": "^AC-0[1-4]-[0-9]{2}$" },
+        "ac": { "enum": ["AC-01", "AC-02", "AC-03", "AC-04"] },
+        "condition": { "type": "string", "minLength": 1 },
+        "window_state": { "type": "string", "minLength": 1 },
+        "expected_tabs": { "type": "integer", "minimum": 0 },
+        "observed_tabs": { "type": "integer", "minimum": 0 },
+        "duration_ms": { "type": "integer", "minimum": 0 },
+        "result": { "enum": ["Pass", "Fail", "Blocked"] },
+        "note": { "type": "string", "minLength": 1 },
+        "read_side_effects": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["restored", "foregrounded", "group_expanded"],
+          "properties": {
+            "restored": { "type": "boolean" },
+            "foregrounded": { "type": "boolean" },
+            "group_expanded": { "type": "boolean" }
+          }
+        },
+        "uia_selected": { "type": "boolean" },
+        "visual_foreground_tab": { "type": "boolean" },
+        "stale_token_rejected": { "type": "boolean" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "ac": { "enum": ["AC-01", "AC-02"] } }, "required": ["ac"] },
+          "then": { "required": ["read_side_effects"] }
+        },
+        {
+          "if": { "properties": { "ac": { "enum": ["AC-03", "AC-04"] } }, "required": ["ac"] },
+          "then": { "required": ["uia_selected", "visual_foreground_tab", "stale_token_rejected"] }
+        },
+        {
+          "if": { "properties": { "result": { "const": "Pass" } }, "required": ["result"] },
+          "then": { "properties": { "observed_tabs": { "minimum": 1 } } }
+        }
+      ]
+    }
+  }
+}
