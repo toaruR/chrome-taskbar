@@ -77,4 +77,16 @@ public sealed class BarLayoutTests
         var tall = BarLayout.WindowSizeFor(new Size(BarLayout.CellWidth, BarLayout.RowHeight * 10));
         Assert.Equal(BarLayout.RowHeight * 10 + 2 + BarLayout.GripSize, tall.Height);
     }
+
+    [Fact]
+    public void RoundingLoss_StillCountsAsFittingCells()
+    {
+        // Window sized for 11 cells, list rounded a fraction of a DIP short (150% DPI).
+        double list = 11 * BarLayout.CellWidth - 0.67;
+        double cell = BarLayout.FillCellWidth(list);
+        Assert.True(11 * cell <= list); // 11 columns, none wrapped into a hidden row
+        Assert.Equal(new Size(list, BarLayout.RowHeight - 0.67), BarLayout.FitListSize(new Size(list, BarLayout.RowHeight - 0.67), 11));
+        // One more button still grows the bar.
+        Assert.Equal(12 * BarLayout.CellWidth, BarLayout.FitListSize(new Size(list, BarLayout.RowHeight - 0.67), 12).Width);
+    }
 }

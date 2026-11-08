@@ -11,6 +11,9 @@ public static class Protocol
     public const int MaxTabs = 512;
     public const int MaxTitleUnits = 1024;
     public const ulong PidMax = uint.MaxValue;
+    public const int MaxIconSide = 64;
+    /// <summary>Raw icon bytes per Result frame; tabs past the budget go without an icon (keeps frames under MaxFrameBytes).</summary>
+    public const int MaxIconBytesPerFrame = 1536 * 1024;
 
     private static readonly HashSet<string> Types = new(StringComparer.Ordinal)
     { "Hello", "ReadTabs", "SelectTab", "Invalidate", "Cancel", "Result" };
@@ -42,6 +45,24 @@ public static class Protocol
         var generation = ParseUnsigned(RequireString(key, "generation"), "generation", long.MaxValue);
         return new WindowKey((nint)hwnd, unchecked((int)(uint)processId), checked((long)processStart), checked((long)generation));
     }
+
+    /// <summary>Optional tab field "icon": null/absent = none; otherwise {width, height, bgra(base64)} with matching length.</summary>
+    public static TabIcon? ParseIcon(JsonElement tab)
+    {
+        if (!tab.TryGetProperty("icon", out var icon) || icon.ValueKind == JsonValueKind.Null) return null;
+        if (icon.ValueKind != JsonValueKind.Object ||
+            !icon.TryGetProperty("width", out var w) || !w.TryGetInt32(out var width) || width is < 1 or > MaxIconSide ||
+            !icon.TryGetProperty("height", out var h) || !h.TryGetInt32(out var height) || height is < 1 or > MaxIconSide)
+            throw new ProtocolException("tab icon size is invalid.");
+        byte[] bgra;
+        try { bgra = Convert.FromBase64String(RequireString(icon, "bgra")); }
+        catch (FormatException) { throw new ProtocolException("tab icon bgra must be base64."); }
+        if (bgra.Length != width * height * 4) throw new ProtocolException("tab icon bgra length mismatch.");
+        return new TabIcon(width, height, bgra);
+    }
+
+    public static object? IconToWire(TabIcon? icon) =>
+        icon is null ? null : new { width = icon.Width, height = icon.Height, bgra = Convert.ToBase64String(icon.Bgra) };
 
     public static Message Parse(ReadOnlySpan<byte> utf8)
     {
@@ -131,7 +152,10 @@ public static class Protocol
             {
                 if (status == "Incomplete" || tabs.ValueKind != JsonValueKind.Array || tabs.GetArrayLength() > MaxTabs) throw new ProtocolException("Result tabs are invalid.");
                 foreach (var tab in tabs.EnumerateArray())
+                {
                     if (tab.ValueKind != JsonValueKind.Object || RequireString(tab, "title").Length > MaxTitleUnits) throw new ProtocolException("Result title is invalid.");
+                    _ = ParseIcon(tab);
+                }
             }
             if (payload.TryGetProperty("availability", out var availability) &&
             (availability.ValueKind != JsonValueKind.String || availability.GetString() != "Complete" || status != "Success"))

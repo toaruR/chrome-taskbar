@@ -17,6 +17,25 @@ public sealed class WindowRegistry
     private readonly Dictionary<nint, Slot> _slots = new();
     private long _nextGeneration = 1;
     private long _nextSequence = 1;
+    // Saved order not yet matched to a live window, keyed by HWND; sequence = index - count (< 1, before new windows).
+    private readonly Dictionary<nint, (SavedWindow Window, long Sequence)> _pending = new();
+
+    /// <summary>
+    /// <paramref name="savedOrder"/> (from a previous run) places matching windows (same HWND, process id and start
+    /// time) in that order; every other window, e.g. a tab dragged out into a new window, is appended on the right.
+    /// </summary>
+    public WindowRegistry(IReadOnlyList<SavedWindow>? savedOrder = null)
+    {
+        if (savedOrder is null) return;
+        for (int i = 0; i < savedOrder.Count; i++)
+            _pending.TryAdd((nint)savedOrder[i].Hwnd, (savedOrder[i], i - savedOrder.Count));
+    }
+
+    /// <summary>Order to save: live windows plus saved ones not seen yet (e.g. cloaked on another desktop).</summary>
+    public IReadOnlyList<SavedWindow> SavedOrder =>
+        _slots.Values.Select(s => (Window: new SavedWindow(s.Key.Hwnd, s.Key.ProcessId, s.Key.ProcessStartTimeTicks), s.Sequence))
+            .Concat(_pending.Values)
+            .OrderBy(p => p.Sequence).Select(p => p.Window).ToList();
 
     /// <summary>Keys that disappeared (or were replaced) in the last Update; their tabs must be invalidated.</summary>
     public IReadOnlyList<WindowKey> LastInvalidated { get; private set; } = Array.Empty<WindowKey>();
@@ -38,12 +57,20 @@ public sealed class WindowRegistry
             }
         }
 
+        // New windows in first-seen (enumeration) order go to the right end, unless the saved order knows them.
         foreach (var (hwnd, o) in current)
         {
             if (_slots.ContainsKey(hwnd)) continue;
             var key = new WindowKey(hwnd, o.ProcessId, o.ProcessStartTimeTicks, _nextGeneration++);
-            _slots[hwnd] = new Slot(key, _nextSequence++);
+            long sequence = _pending.Remove(hwnd, out var saved) &&
+                saved.Window.ProcessId == o.ProcessId && saved.Window.ProcessStartTimeTicks == o.ProcessStartTimeTicks
+                ? saved.Sequence : _nextSequence++;
+            _slots[hwnd] = new Slot(key, sequence);
         }
+        // Saved windows of a Chrome process that no longer owns any window are gone for good.
+        var liveProcesses = current.Values.Select(o => (o.ProcessId, o.ProcessStartTimeTicks)).ToHashSet();
+        foreach (var (hwnd, p) in _pending.ToArray())
+            if (!liveProcesses.Contains((p.Window.ProcessId, p.Window.ProcessStartTimeTicks))) _pending.Remove(hwnd);
 
         var ordered = _slots.Values.OrderBy(s => s.Sequence).ToList();
         var counts = new Dictionary<string, int>(StringComparer.Ordinal);

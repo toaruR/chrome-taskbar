@@ -31,7 +31,8 @@ public partial class MainWindow : Window
 
     private readonly string _workerPath;
     private readonly Win32WindowEnumerator _enumerator = new();
-    private readonly WindowRegistry _registry = new();
+    private readonly WindowRegistry _registry = new(WindowOrderStore.Load(WindowOrderStore.DefaultPath));
+    private IReadOnlyList<SavedWindow> _savedOrder = Array.Empty<SavedWindow>();
     private readonly UiaWorkerBroker _broker = new();
     private readonly HoverController _hover = new();
     private readonly WindowActivator _activator;
@@ -138,6 +139,8 @@ public partial class MainWindow : Window
     {
         var entries = _registry.Update(_enumerator.EnumerateTopLevel(), _enumerator.GetForegroundWindow());
         _registry.ApplyInvalidations(_broker.Cache);
+        var order = _registry.SavedOrder;
+        if (!order.SequenceEqual(_savedOrder)) WindowOrderStore.Save(WindowOrderStore.DefaultPath, _savedOrder = order);
         _vm.Update(entries, _broker.Cache.Get);
     }
 
@@ -146,7 +149,24 @@ public partial class MainWindow : Window
         var r = _activator.Toggle(key, _lastExternalForeground == key.Hwnd);
         if (!r.IsSuccess && !r.IsPending) Title = $"Chrome Taskbar - {r.Outcome}: {r.Detail}";
         RefreshWindows();
+        if (r.IsSuccess) _ = RecaptureMissingIconAsync(key);
     }
+
+    /// <summary>
+    /// A minimized window cannot be captured, so its favicon is retried once it has been activated from the bar
+    /// (after the restore animation has painted the tab strip). With a popup open, its periodic read does this instead.
+    /// </summary>
+    private async Task RecaptureMissingIconAsync(WindowKey key)
+    {
+        if (_vm.Buttons.FirstOrDefault(b => b.Key == key) is not { Favicon: null }) return;
+        await Task.Delay(RecaptureDelayMs);
+        if (_popup is not null || _iconReadInFlight || !_brokerStarted || !_vm.Buttons.Any(b => b.Key == key)) return;
+        _iconRefresh.MarkAttempted(key, MonotonicClock.NowMs);
+        _iconReadInFlight = true;
+        await ReadIconAsync(key);
+    }
+
+    private const int RecaptureDelayMs = 500;
 
     // ---- chrome (left grip) -------------------------------------------------------
 
@@ -346,7 +366,8 @@ public partial class MainWindow : Window
         var cts = _popupCts = new CancellationTokenSource();
         var popup = new TabPopupViewModel(e.Key, e.Generation,
             (k, sid, tok, gen) => _broker.SelectTabAsync(k, sid, tok, gen, cts.Token),
-            _activator.Activate, _activator.IsForegroundConfirmed);
+            _activator.Activate, _activator.IsForegroundConfirmed,
+            title => _vm.Favicons.Get(e.Key, title));
         _popup = popup;
         TabPopup.PlacementTarget = _anchors.GetValueOrDefault(e.Key);
         TabPopup.IsOpen = true;
@@ -361,6 +382,7 @@ public partial class MainWindow : Window
         BrokerResult result;
         try { result = await _broker.ReadTabsAsync(popup.Key, popup.Generation, _popupCts?.Token ?? CancellationToken.None); }
         catch (ObjectDisposedException) { return; } // broker disposed during shutdown
+        if (result.Snapshot is { } snapshot && snapshot.WindowKey == popup.Key) _vm.Favicons.Update(snapshot);
         if (ReferenceEquals(_popup, popup) && popup.Apply(id, result)) ShowPopup(popup);
     }
 

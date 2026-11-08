@@ -20,14 +20,22 @@ public static class BarLayout
     public const double MinWidthWithSideBar = MinWidth + GripSize;
     public const double MinHeight = RowHeight + 2 * WindowBorder;
 
+    /// <summary>
+    /// Layout rounding at fractional DPI (e.g. a 1 DIP border = 1.5 px) can leave the list a fraction of a DIP smaller
+    /// than the size the window was set for. Within this slack a cell still counts as fitting; otherwise the last
+    /// column wraps into a hidden row while the fit sees no need to grow.
+    /// </summary>
+    public const double RoundingSlack = 2;
+
     /// <summary>Grip goes on the short side: landscape -> left (vertical bar), portrait -> top.</summary>
     public static bool IsLandscape(Size window) => window.Width >= window.Height;
 
     /// <summary>Keeps the column count and spreads the leftover width so no gap remains on the right.</summary>
     public static double FillCellWidth(double listWidth)
     {
-        int cols = Math.Max(1, (int)Math.Floor(listWidth / CellWidth));
-        return Math.Max(CellWidth, Math.Floor(listWidth / cols));
+        int cols = Math.Max(1, (int)Math.Floor((listWidth + RoundingSlack) / CellWidth));
+        double cell = Math.Floor(listWidth / cols);
+        return cell >= CellWidth - RoundingSlack ? cell : CellWidth; // narrower than one cell: keep the fixed cell
     }
 
     /// <summary>
@@ -39,15 +47,15 @@ public static class BarLayout
         if (count <= 0) return list;
         if (list.Width >= list.Height)
         {
-            int rows = Math.Max(1, (int)Math.Floor(list.Height / RowHeight));
+            int rows = Math.Max(1, (int)Math.Floor((list.Height + RoundingSlack) / RowHeight));
             int cols = (count + rows - 1) / rows;
-            return new Size(Math.Max(list.Width, cols * CellWidth), list.Height);
+            return list.Width + RoundingSlack >= cols * CellWidth ? list : new Size(cols * CellWidth, list.Height);
         }
         else
         {
-            int cols = Math.Max(1, (int)Math.Floor(list.Width / CellWidth));
+            int cols = Math.Max(1, (int)Math.Floor((list.Width + RoundingSlack) / CellWidth));
             int rows = (count + cols - 1) / cols;
-            return new Size(list.Width, Math.Max(list.Height, rows * RowHeight));
+            return list.Height + RoundingSlack >= rows * RowHeight ? list : new Size(list.Width, rows * RowHeight);
         }
     }
 
@@ -61,13 +69,13 @@ public static class BarLayout
         int rows, cols;
         if (list.Width >= list.Height)
         {
-            rows = Math.Clamp((int)Math.Floor(list.Height / RowHeight), 1, n);
+            rows = Math.Clamp((int)Math.Floor((list.Height + RoundingSlack) / RowHeight), 1, n);
             cols = (n + rows - 1) / rows;
             rows = (n + cols - 1) / cols;
         }
         else
         {
-            cols = Math.Clamp((int)Math.Floor(list.Width / CellWidth), 1, n);
+            cols = Math.Clamp((int)Math.Floor((list.Width + RoundingSlack) / CellWidth), 1, n);
             rows = (n + cols - 1) / cols;
             cols = (n + rows - 1) / rows;
         }

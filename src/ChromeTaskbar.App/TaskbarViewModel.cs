@@ -90,9 +90,9 @@ public sealed class RestartBackoff
 
 public sealed class WindowButtonViewModel
 {
-    public WindowButtonViewModel(ChromeWindowEntry entry, string? tabCountText, string? iconTitle = null)
+    public WindowButtonViewModel(ChromeWindowEntry entry, string? tabCountText, string? iconTitle = null, System.Windows.Media.ImageSource? favicon = null)
     {
-        Entry = entry; TabCountText = tabCountText; IconTitle = iconTitle;
+        Entry = entry; TabCountText = tabCountText; IconTitle = iconTitle; Favicon = favicon;
     }
     public ChromeWindowEntry Entry { get; }
     public WindowKey Key => Entry.Key;
@@ -101,7 +101,9 @@ public sealed class WindowButtonViewModel
     public string? TabCountText { get; }
     /// <summary>Title of the window's leftmost tab (top of the popup list); null until tabs were read once.</summary>
     public string? IconTitle { get; }
-    public System.Windows.Media.ImageSource? Icon => IconTitle is null ? null : Identicon.Image(IconTitle);
+    /// <summary>Leftmost tab's favicon captured from the window; null when it could not be captured for that tab.</summary>
+    public System.Windows.Media.ImageSource? Favicon { get; }
+    public System.Windows.Media.ImageSource? Icon => Favicon ?? (IconTitle is null ? null : Identicon.Image(IconTitle));
 }
 
 /// <summary>Taskbar buttons. Hover only drives HoverController; clicking invokes the injected toggle action.</summary>
@@ -121,6 +123,8 @@ public sealed class TaskbarViewModel : IDisposable
     public ObservableCollection<WindowButtonViewModel> Buttons { get; } = new();
     // Last known leftmost-tab title per window; outlives the bounded, TTL'd snapshot cache so icons stay stable.
     private readonly Dictionary<WindowKey, string> _iconTitles = new();
+    /// <summary>Favicons per window and tab title, shared with the popup.</summary>
+    public FaviconStore Favicons { get; } = new();
 
     /// <summary>Leftmost tab = lowest DisplayOrder, i.e. the first row of the popup list.</summary>
     public static string? LeftmostTabTitle(TabSnapshot s) =>
@@ -135,6 +139,7 @@ public sealed class TaskbarViewModel : IDisposable
         {
             Buttons.Remove(gone);
             _iconTitles.Remove(gone.Key);
+            Favicons.Remove(gone.Key);
             _hover.TargetGone(gone.Key, _clock());
         }
         for (int i = 0; i < entries.Count; i++)
@@ -142,8 +147,13 @@ public sealed class TaskbarViewModel : IDisposable
             var e = entries[i];
             var c = cache(e.Key);
             string? count = c is { Snapshot.Availability: TabAvailability.Available } ? c.Snapshot.Tabs.Count.ToString() : null;
-            if (c is not null && LeftmostTabTitle(c.Snapshot) is { } leftmost) _iconTitles[e.Key] = leftmost;
-            var vm = new WindowButtonViewModel(e, count, _iconTitles.GetValueOrDefault(e.Key));
+            if (c is not null)
+            {
+                Favicons.Update(c.Snapshot);
+                if (LeftmostTabTitle(c.Snapshot) is { } leftmost) _iconTitles[e.Key] = leftmost;
+            }
+            var title = _iconTitles.GetValueOrDefault(e.Key);
+            var vm = new WindowButtonViewModel(e, count, title, title is null ? null : Favicons.Get(e.Key, title));
             int existing = Buttons.ToList().FindIndex(b => b.Key == e.Key);
             if (existing < 0) Buttons.Insert(Math.Min(i, Buttons.Count), vm);
             else Buttons[existing] = vm;
@@ -175,5 +185,6 @@ public sealed class TaskbarViewModel : IDisposable
         _disposed = true;
         Buttons.Clear();
         _iconTitles.Clear();
+        Favicons.Clear();
     }
 }

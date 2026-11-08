@@ -235,7 +235,7 @@ public sealed class UiaWorkerBroker : IDisposable
             var p = reply.Payload;
             var tabs = p.GetProperty("tabs").EnumerateArray().Select(t => new TabEntry(
                 new TabToken(t.GetProperty("tabToken").GetString()!), t.GetProperty("title").GetString()!,
-                t.GetProperty("displayOrder").GetInt32(), t.GetProperty("isSelected").GetBoolean(), t.GetProperty("canSelect").GetBoolean())).ToList();
+                t.GetProperty("displayOrder").GetInt32(), t.GetProperty("isSelected").GetBoolean(), t.GetProperty("canSelect").GetBoolean(), Protocol.ParseIcon(t))).ToList();
             var snapshot = new TabSnapshot(new WorkerEpoch(sentEpoch), key, new SnapshotId(p.GetProperty("snapshotId").GetGuid()),
                 DateTimeOffset.Parse(p.GetProperty("capturedAtUtc").GetString()!, null, System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal),
                 TabAvailability.Available, tabs);
@@ -243,7 +243,7 @@ public sealed class UiaWorkerBroker : IDisposable
             LastError = null;
             return new BrokerResult(ResultStatus.Success, snapshot);
         }
-        catch (Exception e) when (e is KeyNotFoundException or InvalidOperationException or FormatException or JsonException)
+        catch (Exception e) when (e is KeyNotFoundException or InvalidOperationException or FormatException or JsonException or Protocol.ProtocolException)
         {
             return Record(new BrokerResult(ResultStatus.ProtocolError));
         }

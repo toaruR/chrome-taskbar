@@ -9,10 +9,14 @@ internal static class Program
             return 1;
         }
 
+        // Physical-pixel UIA rectangles so they match GetWindowRect / PrintWindow for favicon capture.
+        SetProcessDpiAwarenessContext(-4); // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
         using var server = new PipeServer(pipeName, new ChromeTaskbar.Contracts.WorkerEpoch(epoch));
         await server.RunAsync(CancellationToken.None).ConfigureAwait(false);
         return 0;
     }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool SetProcessDpiAwarenessContext(nint value);
 
     internal static bool TryParseBrokerArguments(string[] args, out string pipeName, out long epoch)
     {

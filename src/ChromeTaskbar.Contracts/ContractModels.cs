@@ -40,7 +40,8 @@ public sealed record TabEntry(
     string Title,
     int DisplayOrder,
     bool IsSelected,
-    bool CanSelect);
+    bool CanSelect,
+    TabIcon? Icon = null);
 
 public sealed record TabSnapshot(
     WorkerEpoch WorkerEpoch,
@@ -49,3 +50,6 @@ public sealed record TabSnapshot(
     DateTimeOffset CapturedAt,
     TabAvailability Availability,
     IReadOnlyList<TabEntry> Tabs);
+
+/// <summary>Tab favicon cut from a window capture: top-down, straight-alpha BGRA (Width * Height * 4 bytes).</summary>
+public sealed record TabIcon(int Width, int Height, byte[] Bgra);

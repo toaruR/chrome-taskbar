@@ -11,10 +11,11 @@ public enum SelectionOutcome
     Stale, Cancelled, Timeout, Unavailable, Incomplete, WindowGone, ProtocolError, Failed,
 }
 
-public sealed record TabItemViewModel(TabToken Token, string Title, int DisplayOrder, bool IsSelected, bool CanSelect)
+public sealed record TabItemViewModel(TabToken Token, string Title, int DisplayOrder, bool IsSelected, bool CanSelect,
+    System.Windows.Media.ImageSource? Favicon = null)
 {
-    /// <summary>Identicon of the title (same as the bar button's icon). UI thread only.</summary>
-    public System.Windows.Media.ImageSource Icon => Identicon.Image(Title);
+    /// <summary>Captured favicon, else the identicon of the title. UI thread only.</summary>
+    public System.Windows.Media.ImageSource Icon => Favicon ?? Identicon.Image(Title);
 }
 
 /// <summary>Popup state for one window. Unavailable/Incomplete is distinct from Empty (zero tabs).</summary>
@@ -39,12 +40,15 @@ public sealed class TabPopupViewModel : IDisposable
     private long _requestId;
     private bool _disposed;
     private SnapshotId? _snapshotId;
+    private readonly Func<string, System.Windows.Media.ImageSource?>? _favicon;
 
     public TabPopupViewModel(WindowKey key, long popupGeneration,
         Func<WindowKey, SnapshotId, TabToken, long, Task<BrokerResult>> select,
         Func<WindowKey, ActivationResult>? activate = null,
-        Func<WindowKey, bool>? confirmForeground = null)
+        Func<WindowKey, bool>? confirmForeground = null,
+        Func<string, System.Windows.Media.ImageSource?>? favicon = null)
     {
+        _favicon = favicon;
         Key = key;
         Generation = popupGeneration;
         _select = select;
@@ -120,7 +124,7 @@ public sealed class TabPopupViewModel : IDisposable
                 if (bad is { } b) { SetStatus(b); return true; }
                 _snapshotId = s.SnapshotId;
                 Tabs = s.Tabs.OrderBy(t => t.DisplayOrder)
-                    .Select(t => new TabItemViewModel(t.Token, t.Title, t.DisplayOrder, t.IsSelected, t.CanSelect && isFresh))
+                    .Select(t => new TabItemViewModel(t.Token, t.Title, t.DisplayOrder, t.IsSelected, t.CanSelect && isFresh, _favicon?.Invoke(t.Title)))
                     .ToList();
                 Status = Tabs.Count == 0 ? PopupStatus.Empty : PopupStatus.Ready;
                 return true;

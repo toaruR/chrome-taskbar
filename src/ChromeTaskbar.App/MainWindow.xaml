@@ -56,9 +56,9 @@
                             Command="{Binding DataContext.ClickCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
                             CommandParameter="{Binding Key}">
                         <DockPanel>
-                            <!-- Identicon of the leftmost tab's title; empty slot keeps alignment until it is known. -->
+                            <!-- Leftmost tab's favicon (identicon of its title when not captured); empty slot keeps alignment until it is known. -->
                             <Image DockPanel.Dock="Left" Width="{x:Static local:BarLayout.IconSize}" Height="{x:Static local:BarLayout.IconSize}"
-                                   Margin="0,0,6,0" VerticalAlignment="Center" RenderOptions.EdgeMode="Aliased"
+                                   Margin="0,0,6,0" VerticalAlignment="Center" RenderOptions.EdgeMode="Aliased" RenderOptions.BitmapScalingMode="HighQuality"
                                    Source="{Binding Icon}" ToolTip="{Binding IconTitle}"/>
                             <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
                         </DockPanel>
@@ -118,7 +118,7 @@
                                                     <Border x:Name="Accent" DockPanel.Dock="Left" Width="3" CornerRadius="1.5"
                                                             Margin="0,1,8,1" Background="Transparent"/>
                                                     <Image DockPanel.Dock="Left" Width="16" Height="16" Margin="0,0,10,0"
-                                                           VerticalAlignment="Center" RenderOptions.EdgeMode="Aliased"
+                                                           VerticalAlignment="Center" RenderOptions.EdgeMode="Aliased" RenderOptions.BitmapScalingMode="HighQuality"
                                                            Source="{Binding Icon}">
                                                         <Image.Clip>
                                                             <RectangleGeometry Rect="0,0,16,16" RadiusX="3" RadiusY="3"/>

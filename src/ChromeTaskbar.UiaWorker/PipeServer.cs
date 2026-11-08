@@ -69,7 +69,7 @@ public sealed class PipeServer : IDisposable
     public static object BuildReadTabsPayload(WindowKey key, TabSnapshot snapshot) =>
         snapshot.Availability != TabAvailability.Available
             ? new { status = ResultStatus.Incomplete.ToString(), windowKey = ToWire(key), snapshotId = snapshot.SnapshotId.Value }
-            : new { status = ResultStatus.Success.ToString(), windowKey = ToWire(key), snapshotId = snapshot.SnapshotId.Value, capturedAtUtc = snapshot.CapturedAt.ToString("O"), tabs = snapshot.Tabs.Select(t => new { tabToken = t.Token.Value, title = t.Title, displayOrder = t.DisplayOrder, isSelected = t.IsSelected, canSelect = t.CanSelect }).ToArray() };
+            : new { status = ResultStatus.Success.ToString(), windowKey = ToWire(key), snapshotId = snapshot.SnapshotId.Value, capturedAtUtc = snapshot.CapturedAt.ToString("O"), tabs = snapshot.Tabs.Select(t => new { tabToken = t.Token.Value, title = t.Title, displayOrder = t.DisplayOrder, isSelected = t.IsSelected, canSelect = t.CanSelect, icon = Protocol.IconToWire(t.Icon) }).ToArray() };
 
     private async Task WriteStatusAsync(Stream pipe, ulong requestId, ResultStatus status, CancellationToken token) =>
         await Protocol.WriteFrameAsync(pipe, Message("Result", requestId, new { status = status.ToString() }), token).ConfigureAwait(false);
