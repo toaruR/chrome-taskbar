@@ -72,3 +72,18 @@ public sealed class WindowOrderTests
         finally { File.Delete(path); }
     }
 }
+
+public sealed class ActiveHighlightTests
+{
+    [Fact]
+    public void OnlyTheForegroundNonMinimizedWindowIsActive()
+    {
+        var r = new WindowRegistry();
+        using var hover = new HoverController();
+        var bar = new TaskbarViewModel(hover, () => 0, _ => { });
+        bar.Update(r.Update(new[] { ChromeWindowFilterTests.W(1), ChromeWindowFilterTests.W(2) }, 2), _ => null);
+        Assert.Equal(new[] { false, true }, bar.Buttons.Select(b => b.IsActive));
+        bar.Update(r.Update(new[] { ChromeWindowFilterTests.W(1), ChromeWindowFilterTests.W(2) with { IsMinimized = true } }, 2), _ => null);
+        Assert.All(bar.Buttons, b => Assert.False(b.IsActive));
+    }
+}

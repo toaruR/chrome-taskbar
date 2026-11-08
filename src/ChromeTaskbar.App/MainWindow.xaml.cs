@@ -97,7 +97,8 @@ public partial class MainWindow : Window
 
     private void OnWinEvent(nint hook, uint ev, nint hwnd, int idObject, int idChild, uint thread, uint time)
     {
-        if (ev == 0x3 && hwnd != new WindowInteropHelper(this).Handle) _lastExternalForeground = hwnd;
+        if (ev == 0x3 && hwnd != new WindowInteropHelper(this).Handle &&
+            !(GetWindowThreadProcessId(hwnd, out uint pid) != 0 && pid == (uint)Environment.ProcessId)) _lastExternalForeground = hwnd;
         if (idObject == 0 && idChild == 0) _coalescer.Notify(MonotonicClock.NowMs);
     }
 
@@ -137,12 +138,25 @@ public partial class MainWindow : Window
 
     private void RefreshWindows()
     {
-        var entries = _registry.Update(_enumerator.EnumerateTopLevel(), _enumerator.GetForegroundWindow());
+        var entries = _registry.Update(_enumerator.EnumerateTopLevel(), ActiveExternalWindow());
         _registry.ApplyInvalidations(_broker.Cache);
         var order = _registry.SavedOrder;
         if (!order.SequenceEqual(_savedOrder)) WindowOrderStore.Save(WindowOrderStore.DefaultPath, _savedOrder = order);
         _vm.Update(entries, _broker.Cache.Get);
     }
+
+    /// <summary>
+    /// Foreground window for highlighting. While the bar itself (or its popup) is foreground, e.g. right after a click,
+    /// the window that was active before it keeps the highlight.
+    /// </summary>
+    private nint ActiveExternalWindow()
+    {
+        nint fg = _enumerator.GetForegroundWindow();
+        GetWindowThreadProcessId(fg, out uint pid);
+        return fg != 0 && pid == (uint)Environment.ProcessId ? _lastExternalForeground : fg;
+    }
+
+    [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(nint hwnd, out uint pid);
 
     private void Toggle(WindowKey key)
     {

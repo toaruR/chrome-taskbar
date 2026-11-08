@@ -97,6 +97,8 @@ public sealed class WindowButtonViewModel
     public ChromeWindowEntry Entry { get; }
     public WindowKey Key => Entry.Key;
     public string Title => Entry.DisplayTitle;
+    /// <summary>The window is the active (foreground, not minimized) window; the bar highlights it.</summary>
+    public bool IsActive => Entry.IsForeground;
     /// <summary>Null when tabs were not obtained; never "0" for an unknown count.</summary>
     public string? TabCountText { get; }
     /// <summary>Title of the window's leftmost tab (top of the popup list); null until tabs were read once.</summary>

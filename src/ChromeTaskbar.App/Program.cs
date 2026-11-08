@@ -8,6 +8,13 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        // One bar per user session: a second launch brings the running bar to the front and exits.
+        using var instance = new System.Threading.Mutex(true, SingleInstance.MutexName, out bool first);
+        if (!first)
+        {
+            SingleInstance.ActivateExisting();
+            return 0;
+        }
         var app = new Application { ShutdownMode = ShutdownMode.OnMainWindowClose };
         var window = new MainWindow(WorkerLocator.Find(args));
         RestorePlacement(window);
@@ -35,6 +42,30 @@ internal static class Program
         window.Width = r.Width;
         window.Height = r.Height;
     }
+}
+
+public static class SingleInstance
+{
+    // Local\ = per logon session, so other users on the same machine can run their own bar.
+    public const string MutexName = @"Local\ChromeTaskbar.App.SingleInstance";
+
+    public static void ActivateExisting()
+    {
+        using var self = System.Diagnostics.Process.GetCurrentProcess();
+        foreach (var p in System.Diagnostics.Process.GetProcessesByName(self.ProcessName))
+            using (p)
+            {
+                if (p.Id == self.Id || p.SessionId != self.SessionId || p.MainWindowHandle == 0) continue;
+                if (IsIconic(p.MainWindowHandle)) ShowWindow(p.MainWindowHandle, SW_RESTORE);
+                SetForegroundWindow(p.MainWindowHandle);
+                return;
+            }
+    }
+
+    private const int SW_RESTORE = 9;
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool IsIconic(nint hwnd);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool ShowWindow(nint hwnd, int cmd);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool SetForegroundWindow(nint hwnd);
 }
 
 public static class WorkerLocator

@@ -55,6 +55,18 @@
                             MouseEnter="OnButtonEnter" MouseLeave="OnButtonLeave"
                             Command="{Binding DataContext.ClickCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
                             CommandParameter="{Binding Key}">
+                        <Button.Style>
+                            <!-- Active window: accent fill + border (same size, so the layout does not shift). -->
+                            <Style TargetType="Button">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsActive}" Value="True">
+                                        <Setter Property="Background" Value="#FFCCE4F7"/>
+                                        <Setter Property="BorderBrush" Value="#FF0078D4"/>
+                                        <Setter Property="FontWeight" Value="SemiBold"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
                         <DockPanel>
                             <!-- Leftmost tab's favicon (identicon of its title when not captured); empty slot keeps alignment until it is known. -->
                             <Image DockPanel.Dock="Left" Width="{x:Static local:BarLayout.IconSize}" Height="{x:Static local:BarLayout.IconSize}"
