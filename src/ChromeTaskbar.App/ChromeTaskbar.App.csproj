@@ -5,7 +5,12 @@
     <UseWPF>true</UseWPF>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
   </PropertyGroup>
+  <ItemGroup>
+    <!-- tools/make-icon.ps1 で再生成できる -->
+    <Resource Include="Assets\app.ico" />
+  </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\ChromeTaskbar.Contracts\ChromeTaskbar.Contracts.csproj" />
   </ItemGroup>

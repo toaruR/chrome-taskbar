@@ -1,5 +1,7 @@
 # Chrome Taskbar
 
+<img src="docs/images/icon.png" alt="Chrome Taskbar のアイコン" width="96">
+
 開いている Chrome のウィンドウを、ボタンにして 1 本のバーに並べる Windows アプリです。
 
 Chrome のウィンドウをたくさん開いていると、Windows のタスクバーではどれがどれだか分かりにくくなります。Chrome Taskbar は 1 ウィンドウを 1 ボタンにして並べ、ボタンにマウスを乗せるとそのウィンドウのタブ一覧を表示します。
