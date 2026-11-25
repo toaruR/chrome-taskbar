@@ -3,8 +3,11 @@ using System.Text.Json;
 
 namespace ChromeTaskbar.App;
 
-/// <summary>A window's identity as saved for the bar order (valid while that Chrome process lives).</summary>
-public sealed record SavedWindow(long Hwnd, int ProcessId, long ProcessStartTimeTicks);
+/// <summary>
+/// A window as saved for the bar order. The identity is valid while that Chrome process lives; after Chrome restarts,
+/// <paramref name="IconTitle"/> (leftmost tab title) matches the restored window instead.
+/// </summary>
+public sealed record SavedWindow(long Hwnd, int ProcessId, long ProcessStartTimeTicks, string? IconTitle = null);
 
 /// <summary>
 /// Saves / restores the button order in %APPDATA%\ChromeTaskbar\order.json so the bar keeps its order across app

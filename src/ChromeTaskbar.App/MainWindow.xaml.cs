@@ -138,7 +138,8 @@ public partial class MainWindow : Window
 
     private void RefreshWindows()
     {
-        var entries = _registry.Update(_enumerator.EnumerateTopLevel(), ActiveExternalWindow());
+        var entries = _registry.Update(_enumerator.EnumerateTopLevel(), ActiveExternalWindow(),
+            k => _broker.Cache.Get(k) is { } c ? TaskbarViewModel.LeftmostTabTitle(c.Snapshot) : null);
         _registry.ApplyInvalidations(_broker.Cache);
         var order = _registry.SavedOrder;
         if (!order.SequenceEqual(_savedOrder)) WindowOrderStore.Save(WindowOrderStore.DefaultPath, _savedOrder = order);

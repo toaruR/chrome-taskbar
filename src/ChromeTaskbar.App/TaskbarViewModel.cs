@@ -158,7 +158,11 @@ public sealed class TaskbarViewModel : IDisposable
             var vm = new WindowButtonViewModel(e, count, title, title is null ? null : Favicons.Get(e.Key, title));
             int existing = Buttons.ToList().FindIndex(b => b.Key == e.Key);
             if (existing < 0) Buttons.Insert(Math.Min(i, Buttons.Count), vm);
-            else Buttons[existing] = vm;
+            else
+            {
+                Buttons[existing] = vm;
+                if (existing != i) Buttons.Move(existing, i); // re-placed, e.g. matched to a saved slot
+            }
         }
     }
 
