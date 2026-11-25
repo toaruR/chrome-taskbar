@@ -1,3 +1,8 @@
+---
+type: spec
+title: Chrome Taskbar アーキテクチャ設計
+owner: ai
+---
 # Chrome Taskbar アーキテクチャ設計
 
 作成日・改訂日: 2026-11-06 / 状態: 実装済み・PoC（AC-01〜04）は Pass、受け入れ（AC-05〜12）の一部は実機未検証（Blocked）。詳細は証跡 JSON を参照
@@ -94,7 +99,7 @@ WPF と Worker は C# / `net10.0-windows`、Worker は `System.Windows.Automatio
 | `LayoutMath.cs` | 画面内補正を流用し、ポップアップと混在 DPI に拡張 |
 | `TitleParser` / `WslPath` / `TitlePathSettings` / フォルダーを開く処理 | VS Code 固有であり本方式に不要 |
 
-参照: [vscode-selector](../../../vscode-selector/) と [MIT License](../../../vscode-selector/LICENSE)。実装時に表示を保持する。
+参照: [vscode-selector](../../../vscode-selector) と [MIT License](../../../vscode-selector/LICENSE)。実装時に表示を保持する。
 
 ## 6. ウィンドウ一覧と識別
 

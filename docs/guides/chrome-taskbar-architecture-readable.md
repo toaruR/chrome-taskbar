@@ -1,6 +1,11 @@
+---
+type: guide
+title: Chrome Taskbar 設計ガイド(読みやすい版)
+owner: ai
+---
 # Chrome Taskbar 設計ガイド（読みやすい版）
 
-> 元資料: [chrome-taskbar-architecture.md](chrome-taskbar-architecture.md)（正式な仕様はこちら。数値や IPC の厳密な定義は原本を参照）
+> 元資料: [chrome-taskbar-architecture.md](../spec/chrome-taskbar-architecture.md)（正式な仕様はこちら。数値や IPC の厳密な定義は原本を参照）
 > 作成日: 2026-11-06 / 状態: 設計案。まだ実装も実機検証もしていない
 
 ---

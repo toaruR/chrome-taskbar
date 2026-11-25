@@ -38,7 +38,7 @@
       ],
       "verify": [
         {
-          "command": "pwsh -NoProfile -File docs/plans/validate-chrome-taskbar-plan.ps1 -PlanPath docs/plans/chrome-taskbar-plan.json -DesignPath docs/plans/chrome-taskbar-architecture.md -EvidencePath docs/plans/chrome-taskbar-poc-evidence.json -RequirePocEvidence",
+          "command": "pwsh -NoProfile -File docs/plans/validate-chrome-taskbar-plan.ps1 -PlanPath docs/plans/chrome-taskbar-plan.json -DesignPath docs/spec/chrome-taskbar-architecture.md -EvidencePath docs/plans/chrome-taskbar-poc-evidence.json -RequirePocEvidence",
           "expect_exit_code": 0
         }
       ],
@@ -181,7 +181,7 @@
       ],
       "verify": [
         {
-          "command": "pwsh -NoProfile -File docs/plans/validate-chrome-taskbar-plan.ps1 -PlanPath docs/plans/chrome-taskbar-plan.json -DesignPath docs/plans/chrome-taskbar-architecture.md -EvidencePath docs/plans/chrome-taskbar-poc-evidence.json -RequirePocGatePass",
+          "command": "pwsh -NoProfile -File docs/plans/validate-chrome-taskbar-plan.ps1 -PlanPath docs/plans/chrome-taskbar-plan.json -DesignPath docs/spec/chrome-taskbar-architecture.md -EvidencePath docs/plans/chrome-taskbar-poc-evidence.json -RequirePocGatePass",
           "expect_exit_code": 0
         }
       ],
@@ -415,7 +415,7 @@
         "Stopping after T009 leaves a buildable solution, all tests green, validated acceptance evidence, and no Worker, scheduler, or popup process running."
       ],
       "verify": [
-        {"command":"pwsh -NoProfile -Command \"dotnet test tests/ChromeTaskbar.Tests/ChromeTaskbar.Tests.csproj --no-restore --filter 'FullyQualifiedName~AcceptanceBoundary'; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; & pwsh -NoProfile -File docs/plans/validate-chrome-taskbar-plan.ps1 -PlanPath docs/plans/chrome-taskbar-plan.json -DesignPath docs/plans/chrome-taskbar-architecture.md -EvidencePath docs/plans/chrome-taskbar-acceptance-evidence.json -RequireAcceptanceEvidence; exit $LASTEXITCODE\"","expect_exit_code":0}
+        {"command":"pwsh -NoProfile -Command \"dotnet test tests/ChromeTaskbar.Tests/ChromeTaskbar.Tests.csproj --no-restore --filter 'FullyQualifiedName~AcceptanceBoundary'; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; & pwsh -NoProfile -File docs/plans/validate-chrome-taskbar-plan.ps1 -PlanPath docs/plans/chrome-taskbar-plan.json -DesignPath docs/spec/chrome-taskbar-architecture.md -EvidencePath docs/plans/chrome-taskbar-acceptance-evidence.json -RequireAcceptanceEvidence; exit $LASTEXITCODE\"","expect_exit_code":0}
       ],
       "estimate_rounds": 2
     }

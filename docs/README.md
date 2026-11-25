@@ -64,8 +64,8 @@ App は起動ごとにランダム名の Named Pipe（`ChromeTaskbar.<hex>`）�
 検証は `pwsh`（PowerShell 7 以降）で実行する。Windows PowerShell 5 は対象外。
 
 ```powershell
-pwsh -NoProfile -File docs/plans/validate-chrome-taskbar-plan.ps1 -PlanPath docs/plans/chrome-taskbar-plan.json -DesignPath docs/plans/chrome-taskbar-architecture.md -EvidencePath docs/plans/chrome-taskbar-poc-evidence.json -RequirePocGatePass
-pwsh -NoProfile -File docs/plans/validate-chrome-taskbar-plan.ps1 -PlanPath docs/plans/chrome-taskbar-plan.json -DesignPath docs/plans/chrome-taskbar-architecture.md -EvidencePath docs/plans/chrome-taskbar-acceptance-evidence.json -RequireAcceptanceEvidence
+pwsh -NoProfile -File docs/plans/validate-chrome-taskbar-plan.ps1 -PlanPath docs/plans/chrome-taskbar-plan.json -DesignPath docs/spec/chrome-taskbar-architecture.md -EvidencePath docs/plans/chrome-taskbar-poc-evidence.json -RequirePocGatePass
+pwsh -NoProfile -File docs/plans/validate-chrome-taskbar-plan.ps1 -PlanPath docs/plans/chrome-taskbar-plan.json -DesignPath docs/spec/chrome-taskbar-architecture.md -EvidencePath docs/plans/chrome-taskbar-acceptance-evidence.json -RequireAcceptanceEvidence
 ```
 
 前者は PoC ゲートが Pass であること、後者は受け入れ証跡の形式と除外項目を検証する（受け入れゲート自体は Blocked のまま）。
@@ -83,3 +83,20 @@ pwsh -NoProfile -File docs/plans/validate-chrome-taskbar-plan.ps1 -PlanPath docs
 ## 対象外
 
 Chrome 拡張機能、Native Messaging、自動昇格、Chrome 設定変更・デバッグ起動、Chrome の終了、パッケージング・配布、永続化。
+
+<!-- docs-index:begin (docs_lint.py --write-index が自動生成。手で編集しない) -->
+
+## 仕様
+
+| 文書 | 更新 |
+|---|---|
+| [Chrome Taskbar アーキテクチャ設計](spec/chrome-taskbar-architecture.md) | 2026-11-25 |
+| [仕様書](spec/specification.md) | 2026-11-25 |
+
+## ガイド
+
+| 文書 | 更新 |
+|---|---|
+| [Chrome Taskbar 設計ガイド(読みやすい版)](guides/chrome-taskbar-architecture-readable.md) | 2026-11-25 |
+
+<!-- docs-index:end -->
