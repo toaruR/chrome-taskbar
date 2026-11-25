@@ -1,3 +1,7 @@
+---
+type: spec
+---
+
 <!-- spec-doc:last-reviewed-commit=<初回実行時に /spec-doc が自動記入> (対象リポジトリ名) reviewed-at=YYYY-MM-DD -->
 
 # 仕様書
