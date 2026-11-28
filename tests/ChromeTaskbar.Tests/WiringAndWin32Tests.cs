@@ -50,6 +50,7 @@ public sealed class WiringAndWin32Tests
         var hello = await Protocol.ReadFrameAsync(broker, cts.Token);
         Assert.Equal("Hello", hello.Type);
         Assert.Equal(7UL, hello.WorkerEpoch);
+        Assert.True(Protocol.SupportsCaptureControl(hello));
 
         var request = new Protocol.Message("Cancel", 99UL, 5UL, JsonSerializer.SerializeToElement(new { targetRequestId = "4" }));
         await Protocol.WriteFrameAsync(broker, request, cts.Token);
@@ -127,15 +128,19 @@ public sealed class WiringAndWin32Tests
     }
 
     [Fact]
-    public async Task Broker_RecoveryFails_ReportsToDiagnosticsSink_AndSetsRecoveryFailed()
+    public async Task Broker_Reports_Transport_And_Startup_Failures()
     {
         var sink = new List<string>();
+        long now = 0;
         using var b = new UiaWorkerBroker((_, _) => throw new IOException("pipe broken"),
-            _ => throw new InvalidOperationException("restart denied"), null, null, null, sink.Add);
+            _ => throw new InvalidOperationException("restart denied"), null, null, null, sink.Add, () => now);
         var r = await b.ReadTabsAsync(TabSnapshotCacheTests.K(1), 0).WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Equal(ResultStatus.Failed, r.Status);
-        Assert.True(b.RecoveryFailed);
-        Assert.Contains(sink, m => m.Contains("worker recovery failed") && m.Contains("restart denied"));
+        Assert.True(b.IsRecovering);
+        now = 1000;
+        await b.ReadTabsAsync(TabSnapshotCacheTests.K(1), 0, kind: TabReadKind.Retry);
+        Assert.Contains(sink, m => m.Contains("request failed") && m.Contains("reason=IOException") && m.Contains("requestId=1"));
+        Assert.Contains(sink, m => m.Contains("worker startup failed") && m.Contains("reason=InvalidOperationException"));
     }
 
     [Fact]

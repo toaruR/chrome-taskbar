@@ -14,6 +14,7 @@ public class UiaWorkerBrokerTests
     private sealed class Rig : IDisposable
     {
         public DateTimeOffset Now = T0;
+        public long NowMs;
         public readonly List<Protocol.Message> Calls = new();
         public Func<Protocol.Message, CancellationToken, Task<Protocol.Message>> Handler;
         public int Restarts;
@@ -26,7 +27,7 @@ public class UiaWorkerBrokerTests
             Broker = new UiaWorkerBroker(
                 (m, ct) => { lock (Calls) Calls.Add(m); return Handler(m, ct); },
                 _ => { Restarts++; return Task.CompletedTask; },
-                () => Now, _ => WindowCurrent);
+                () => Now, _ => WindowCurrent, monotonicClock: () => NowMs);
         }
 
         public Protocol.Message Reply(Protocol.Message req, string status = "Success", ulong? epoch = null, ulong? id = null)
@@ -99,7 +100,7 @@ public class UiaWorkerBrokerTests
     }
 
     [Fact]
-    public async Task Hung_worker_is_recreated_and_state_invalidated()
+    public async Task Hung_worker_is_invalidated_and_restarted_only_after_cooldown()
     {
         using var rig = new Rig();
         await rig.Broker.ReadTabsAsync(K(1), 0);
@@ -107,30 +108,151 @@ public class UiaWorkerBrokerTests
         rig.Handler = (_, _) => new TaskCompletionSource<Protocol.Message>().Task;
         var r = await rig.Broker.ReadTabsAsync(K(2), 0, deadline: TimeSpan.FromMilliseconds(50));
         Assert.Equal(ResultStatus.Timeout, r.Status);
-        Assert.Equal(1, rig.Restarts);
+        Assert.Equal(0, rig.Restarts);
         Assert.NotEqual(epoch, rig.Broker.Epoch);
         Assert.Equal(0, rig.Broker.Cache.Count);
         Assert.Equal(ResultStatus.Timeout, rig.Broker.LastError!.Status);
+        Assert.True(rig.Broker.IsRecovering);
+        rig.Handler = (m, _) => Task.FromResult(rig.Reply(m));
+        rig.NowMs = 999;
+        Assert.Equal(ResultStatus.Unavailable, (await rig.Broker.ReadTabsAsync(K(2), 0)).Status);
+        Assert.False(rig.Broker.CanRetry);
+        rig.NowMs = 1000;
+        Assert.True(rig.Broker.CanRetry);
+        Assert.Equal(ResultStatus.Success, (await rig.Broker.ReadTabsAsync(K(2), 0)).Status);
+        Assert.Equal(1, rig.Restarts);
+        Assert.False(rig.Broker.IsRecovering);
+        Assert.False(Protocol.ShouldCaptureIcons(rig.Calls[^1].Payload));
     }
 
     [Fact]
-    public async Task Restart_failure_sets_recovery_failed()
+    public async Task Restart_failure_increases_cooldown()
     {
-        using var broker = new UiaWorkerBroker((_, _) => new TaskCompletionSource<Protocol.Message>().Task,
-            _ => throw new InvalidOperationException("no"), null, null);
-        var r = await broker.ReadTabsAsync(K(1), 0, deadline: TimeSpan.FromMilliseconds(50));
-        Assert.Equal(ResultStatus.Timeout, r.Status);
-        Assert.True(broker.RecoveryFailed);
+        long now = 0;
+        using var broker = new UiaWorkerBroker((_, _) => throw new IOException("pipe broke"),
+            _ => throw new InvalidOperationException("no"), () => T0, null, monotonicClock: () => now);
+        Assert.Equal(ResultStatus.Failed, (await broker.ReadTabsAsync(K(1), 0)).Status);
+        now = 1000;
+        Assert.Equal(ResultStatus.Failed, (await broker.ReadTabsAsync(K(1), 0, kind: TabReadKind.Retry)).Status);
+        Assert.True(broker.IsRecovering);
+        now = 5999;
+        Assert.False(broker.CanRetry);
+        now = 6000;
+        Assert.True(broker.CanRetry);
     }
 
     [Fact]
-    public async Task Io_failure_recovers_worker()
+    public async Task Io_failure_stops_worker_without_starting_another()
     {
         using var rig = new Rig();
         rig.Handler = (_, _) => throw new IOException("pipe broke");
         var r = await rig.Broker.ReadTabsAsync(K(1), 0);
         Assert.Equal(ResultStatus.Failed, r.Status);
+        Assert.Equal(0, rig.Restarts);
+        Assert.True(rig.Broker.IsRecovering);
+    }
+
+    [Fact]
+    public async Task Repeated_timeouts_allow_only_two_restarts_and_require_manual_retry()
+    {
+        using var rig = new Rig();
+        rig.Handler = async (m, ct) =>
+        {
+            await Task.Delay(Timeout.Infinite, ct);
+            return rig.Reply(m);
+        };
+        var deadline = TimeSpan.FromMilliseconds(20);
+        for (int i = 0; i <= 12; i++)
+        {
+            rig.NowMs = i * 1000;
+            var result = await rig.Broker.ReadTabsAsync(K(1), 0, deadline: deadline);
+            Assert.Equal(i is 0 or 1 or 6 ? ResultStatus.Timeout : ResultStatus.Unavailable, result.Status);
+            foreach (var kind in new[] { TabReadKind.Background, TabReadKind.HoverPrefetch, TabReadKind.PopupRefresh, TabReadKind.WindowActivated })
+                Assert.Equal(ResultStatus.Unavailable, (await rig.Broker.ReadTabsAsync(K(2), 0, kind: kind)).Status);
+        }
+        Assert.Equal(2, rig.Restarts);
+        Assert.Equal(3, rig.Calls.Count);
+        var key = K(1);
+        var world = new FakeWorld();
+        world.Windows[key.Hwnd] = ChromeWindowFilterTests.W(key.Hwnd, pid: key.ProcessId, start: key.ProcessStartTimeTicks);
+        Assert.Equal(ActivationOutcome.Activated, new WindowActivator(world, world).Toggle(key, false).Outcome);
+        Assert.True(rig.Broker.IsRecovering);
+        rig.NowMs = 36_000;
+        rig.Handler = (m, _) => Task.FromResult(rig.Reply(m));
+        Assert.True(rig.Broker.CanRetry);
+        Assert.Equal(ResultStatus.Unavailable, (await rig.Broker.ReadTabsAsync(K(1), 0)).Status);
+        Assert.Equal(ResultStatus.Success, (await rig.Broker.ReadTabsAsync(K(1), 0, kind: TabReadKind.Retry)).Status);
+        Assert.False(rig.Broker.IsRecovering);
+    }
+
+    [Fact]
+    public async Task Successful_reads_reset_backoff_but_keep_the_rolling_restart_limit()
+    {
+        using var rig = new Rig();
+        for (int i = 0; i < 3; i++)
+        {
+            rig.Handler = (_, _) => throw new IOException();
+            await rig.Broker.ReadTabsAsync(K(1), 0);
+            rig.NowMs += 1000;
+            rig.Handler = (m, _) => Task.FromResult(rig.Reply(m));
+            var probe = await rig.Broker.ReadTabsAsync(K(1), 0, kind: TabReadKind.Retry);
+            Assert.Equal(i < 2 ? ResultStatus.Success : ResultStatus.Unavailable, probe.Status);
+        }
+        Assert.Equal(2, rig.Restarts);
+        rig.NowMs = 30_999;
+        Assert.False(rig.Broker.CanRetry);
+        rig.NowMs = 31_000;
+        Assert.True(rig.Broker.CanRetry);
+    }
+
+    [Fact]
+    public async Task Startup_followed_by_an_incomplete_read_keeps_automatic_reads_paused()
+    {
+        using var rig = new Rig();
+        rig.Handler = (_, _) => throw new IOException();
+        await rig.Broker.ReadTabsAsync(K(1), 0);
+        rig.NowMs = 1000;
+        rig.Handler = (m, _) => Task.FromResult(rig.Reply(m, "Incomplete"));
+        Assert.Equal(ResultStatus.Incomplete, (await rig.Broker.ReadTabsAsync(K(1), 0, kind: TabReadKind.Retry)).Status);
+        Assert.True(rig.Broker.IsRecovering);
+        Assert.True(rig.Broker.CanRetry);
+        Assert.Equal(ResultStatus.Unavailable, (await rig.Broker.ReadTabsAsync(K(1), 0, kind: TabReadKind.Background)).Status);
+        Assert.Equal(2, rig.Calls.Count);
         Assert.Equal(1, rig.Restarts);
+    }
+
+    [Fact]
+    public async Task Restart_time_does_not_consume_the_read_budget()
+    {
+        long nowMs = 0;
+        var now = T0;
+        DateTimeOffset wireDeadline = default;
+        using var broker = new UiaWorkerBroker((request, _) =>
+        {
+            if (nowMs == 0) throw new IOException();
+            wireDeadline = request.Payload.GetProperty("deadlineUtc").GetDateTimeOffset();
+            return Task.FromResult(new Protocol.Message("Result", request.WorkerEpoch, request.RequestId,
+                JsonSerializer.SerializeToElement(new { status = "Incomplete" })));
+        }, _ => { now = now.AddSeconds(2); return Task.CompletedTask; }, () => now, null, monotonicClock: () => nowMs);
+        await broker.ReadTabsAsync(K(1), 0);
+        nowMs = 1000;
+        Assert.Equal(ResultStatus.Incomplete, (await broker.ReadTabsAsync(K(1), 0, kind: TabReadKind.Retry)).Status);
+        Assert.Equal(now + UiaWorkerBroker.ReadDeadline, wireDeadline);
+    }
+
+    [Theory]
+    [InlineData(TabReadKind.Background, false)]
+    [InlineData(TabReadKind.HoverPrefetch, false)]
+    [InlineData(TabReadKind.PopupRefresh, false)]
+    [InlineData(TabReadKind.Retry, false)]
+    [InlineData(TabReadKind.PopupOpen, true)]
+    [InlineData(TabReadKind.WindowActivated, true)]
+    public async Task Only_foreground_read_triggers_request_favicon_capture(TabReadKind kind, bool captureIcons)
+    {
+        using var rig = new Rig();
+        var result = await rig.Broker.ReadTabsAsync(K(1), 0, kind: kind);
+        Assert.Equal("A", Assert.Single(result.Snapshot!.Tabs).Title);
+        Assert.Equal(captureIcons, Protocol.ShouldCaptureIcons(Assert.Single(rig.Calls).Payload));
     }
 
     [Fact]

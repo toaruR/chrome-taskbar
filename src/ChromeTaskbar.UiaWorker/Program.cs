@@ -12,7 +12,8 @@ internal static class Program
         // Physical-pixel UIA rectangles so they match GetWindowRect / PrintWindow for favicon capture.
         SetProcessDpiAwarenessContext(-4); // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
         using var server = new PipeServer(pipeName, new ChromeTaskbar.Contracts.WorkerEpoch(epoch));
-        await server.RunAsync(CancellationToken.None).ConfigureAwait(false);
+        try { await server.RunAsync(CancellationToken.None).ConfigureAwait(false); }
+        catch (System.IO.EndOfStreamException) { } // broker closed the pipe
         return 0;
     }
 

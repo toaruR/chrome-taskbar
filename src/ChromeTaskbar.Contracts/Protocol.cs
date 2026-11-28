@@ -12,6 +12,7 @@ public static class Protocol
     public const int MaxTitleUnits = 1024;
     public const ulong PidMax = uint.MaxValue;
     public const int MaxIconSide = 64;
+    public const string WorkerDiagnosticPrefix = "ChromeTaskbar.UIA ";
     /// <summary>Raw icon bytes per Result frame; tabs past the budget go without an icon (keeps frames under MaxFrameBytes).</summary>
     public const int MaxIconBytesPerFrame = 1536 * 1024;
 
@@ -22,6 +23,12 @@ public static class Protocol
 
     public sealed record Message(string Type, ulong WorkerEpoch, ulong RequestId, JsonElement Payload);
     public sealed class ProtocolException(string message) : IOException(message);
+
+    public static bool SupportsCaptureControl(Message hello) =>
+        hello.Payload.TryGetProperty("supportsCaptureControl", out var supported) && supported.ValueKind == JsonValueKind.True;
+
+    public static bool ShouldCaptureIcons(JsonElement payload) =>
+        payload.TryGetProperty("captureIcons", out var capture) && capture.ValueKind == JsonValueKind.True;
 
     public static string SerializeUnsigned(ulong value) => value.ToString(CultureInfo.InvariantCulture);
 
@@ -143,6 +150,9 @@ public static class Protocol
             if (!DateTimeOffset.TryParseExact(deadline, "O", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out _))
                 throw new ProtocolException("deadlineUtc must be RFC3339 UTC.");
         }
+        if (type == "ReadTabs" && payload.TryGetProperty("captureIcons", out var capture) &&
+            capture.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+            throw new ProtocolException("captureIcons must be a boolean.");
         if (type == "Cancel") ParseUnsigned(RequireString(payload, "targetRequestId"), "targetRequestId");
         if (type == "Result")
         {

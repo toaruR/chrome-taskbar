@@ -21,6 +21,23 @@ public sealed class ChromeUiaTabProvider
         Protocol.ProbeAvailabilityFor(visited, depth, elapsed, tabs, titleUnits);
 
     public TabSnapshot ReadTabs(WindowKey key, DateTimeOffset deadlineUtc)
+        => ReadTabs(key, deadlineUtc, captureIcons: false, new WorkerRequestDiagnostic(key.ProcessId, epoch, 0));
+
+    internal TabSnapshot ReadTabs(WindowKey key, DateTimeOffset deadlineUtc, bool captureIcons, WorkerRequestDiagnostic diagnostic)
+    {
+        var rects = captureIcons ? new List<System.Windows.Rect>() : null;
+        var entries = new List<TabEntry>();
+        var snapshot = diagnostic.Measure("uia-read", () => ReadTabsCore(key, deadlineUtc, entries, rects));
+        if (rects is null || snapshot.Availability != TabAvailability.Available || DateTimeOffset.UtcNow >= deadlineUtc)
+            return snapshot;
+
+        var icons = FaviconCapture.TryCapture(key.Hwnd, rects, diagnostic);
+        for (int i = 0; i < entries.Count; i++)
+            if (icons[i] is { } icon) entries[i] = entries[i] with { Icon = icon };
+        return snapshot;
+    }
+
+    private TabSnapshot ReadTabsCore(WindowKey key, DateTimeOffset deadlineUtc, List<TabEntry> entries, List<System.Windows.Rect>? rects)
     {
         if (DateTimeOffset.UtcNow >= deadlineUtc) return Empty(key, TabAvailability.Unavailable);
         tabs.Clear();
@@ -32,13 +49,11 @@ public sealed class ChromeUiaTabProvider
             cache.Add(AutomationElement.ControlTypeProperty);
             cache.Add(AutomationElement.NameProperty);
             cache.Add(AutomationElement.RuntimeIdProperty);
-            cache.Add(AutomationElement.BoundingRectangleProperty);
+            if (rects is not null) cache.Add(AutomationElement.BoundingRectangleProperty);
             using var _ = cache.Activate();
             var queue = new Queue<(AutomationElement Element, int Depth, AutomationElement? Parent)>();
             queue.Enqueue((AutomationElement.FromHandle(key.Hwnd), 0, null));
             AutomationElement? strip = null;
-            var rects = new List<System.Windows.Rect>();
-            var entries = new List<TabEntry>();
             var visited = 0;
             while (queue.Count > 0)
             {
@@ -56,7 +71,7 @@ public sealed class ChromeUiaTabProvider
                     var token = NewToken(); var runtimeId = element.GetRuntimeId();
                     var canSelect = element.TryGetCurrentPattern(SelectionItemPattern.Pattern, out var pattern);
                     var selected = canSelect && ((SelectionItemPattern)pattern).Current.IsSelected;
-                    rects.Add(CachedBounds(element));
+                    rects?.Add(CachedBounds(element));
                     tabs[token] = new TabReference(key, strip, element, runtimeId);
                     entries.Add(new TabEntry(new TabToken(token), title, entries.Count, selected, canSelect));
                 }
@@ -64,12 +79,6 @@ public sealed class ChromeUiaTabProvider
                     foreach (var child in Children(element, e => Walker.GetFirstChild(e, cache), e => Walker.GetNextSibling(e, cache))) queue.Enqueue((child, depth + 1, element));
             }
             currentSnapshotId = new SnapshotId(Guid.NewGuid());
-            if (DateTimeOffset.UtcNow < deadlineUtc)
-            {
-                // Best effort: a missing favicon never fails the read (the app falls back to the title identicon).
-                var icons = FaviconCapture.TryCapture(key.Hwnd, rects);
-                for (int i = 0; i < entries.Count; i++) if (icons[i] is { } icon) entries[i] = entries[i] with { Icon = icon };
-            }
             return new TabSnapshot(epoch, key, currentSnapshotId.Value, DateTimeOffset.UtcNow, TabAvailability.Available, entries);
         }
         catch (ElementNotAvailableException) { return Empty(key, TabAvailability.Unavailable); }

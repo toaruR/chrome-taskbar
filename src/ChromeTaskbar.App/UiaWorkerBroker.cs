@@ -10,6 +10,8 @@ namespace ChromeTaskbar.App;
 
 public sealed record BrokerResult(ResultStatus Status, TabSnapshot? Snapshot = null);
 
+public enum TabReadKind { PopupOpen, Background, HoverPrefetch, PopupRefresh, WindowActivated, Retry }
+
 /// <summary>Sends one request to the worker and returns the reply (default: named pipe).</summary>
 public delegate Task<Protocol.Message> WorkerCall(Protocol.Message request, CancellationToken cancellationToken);
 
@@ -17,6 +19,10 @@ public sealed class UiaWorkerBroker : IDisposable
 {
     public static readonly TimeSpan ReadDeadline = TimeSpan.FromMilliseconds(1500);
     public static readonly TimeSpan SelectDeadline = TimeSpan.FromMilliseconds(2000);
+    private static readonly TimeSpan WorkerStartupDeadline = TimeSpan.FromSeconds(5);
+    private const long RestartWindowMs = 30_000;
+    private const int MaxRestartsPerWindow = 2;
+    private const int FailuresBeforeManualRetry = 3;
 
     private sealed class Job
     {
@@ -32,6 +38,7 @@ public sealed class UiaWorkerBroker : IDisposable
     private readonly WorkerCall? injectedCall;
     private readonly Func<CancellationToken, Task>? injectedRestart;
     private readonly Func<DateTimeOffset> clock;
+    private readonly Func<long> monotonicClock;
     private readonly Func<WindowKey, bool> isCurrentWindow;
     private readonly object gate = new();
     private readonly Queue<Job> selects = new();
@@ -39,107 +46,145 @@ public sealed class UiaWorkerBroker : IDisposable
     private bool pumping;
     private long nextRequestId;
     private long popupGeneration;
-    private string? workerPath;
+    private readonly string? workerPath;
+    private readonly RestartBackoff backoff = new();
+    private readonly Queue<long> restartAttempts = new();
     private NamedPipeServerStream? pipe;
     private Process? worker;
+    private bool connected;
+    private volatile bool recovering;
     private long epoch;
     private volatile bool disposed;
 
-    public UiaWorkerBroker() : this(null, null, null, null) { }
+    public UiaWorkerBroker(string workerPath) : this(null, null, null, null, diagnostics: UiaDiagnosticLog.Write)
+    {
+        this.workerPath = workerPath;
+    }
 
-    public UiaWorkerBroker(WorkerCall? call, Func<CancellationToken, Task>? restart, Func<DateTimeOffset>? clock, Func<WindowKey, bool>? isCurrentWindow, TabSnapshotCache? cache = null, Action<string>? diagnostics = null)
+    public UiaWorkerBroker(WorkerCall? call, Func<CancellationToken, Task>? restart, Func<DateTimeOffset>? clock, Func<WindowKey, bool>? isCurrentWindow, TabSnapshotCache? cache = null, Action<string>? diagnostics = null, Func<long>? monotonicClock = null)
     {
         this.diagnostics = diagnostics ?? (m => Trace.TraceError(m));
         injectedCall = call;
         injectedRestart = restart;
+        connected = call is not null;
         this.clock = clock ?? (() => DateTimeOffset.UtcNow);
+        this.monotonicClock = monotonicClock ?? (() => MonotonicClock.NowMs);
         this.isCurrentWindow = isCurrentWindow ?? (_ => true);
         Cache = cache ?? new TabSnapshotCache(this.clock);
     }
 
     public WorkerEpoch Epoch => new(Interlocked.Read(ref epoch));
-    public string? PipeName { get; private set; }
     public TabSnapshotCache Cache { get; }
     /// <summary>Last non-stale failure; stale/cancelled discards never overwrite it. Cleared by a successful result.</summary>
     public BrokerResult? LastError { get; private set; }
-    /// <summary>True when the worker could not be recreated (UI should offer a retry button).</summary>
-    public bool RecoveryFailed { get; private set; }
+    public bool IsRecovering => recovering;
+    public bool CanRetry
+    {
+        get
+        {
+            if (!recovering) return false;
+            lock (gate) return !disposed && recovering && (connected || CanRestart(monotonicClock()));
+        }
+    }
     /// <summary>Most recent diagnostic message (also sent to the injected sink, default Trace.TraceError).</summary>
     public string? LastDiagnostic { get; private set; }
 
     /// <summary>Generation of the currently open popup; results for another generation are discarded.</summary>
     public long PopupGeneration { get => Interlocked.Read(ref popupGeneration); set => Interlocked.Exchange(ref popupGeneration, value); }
 
-    public async Task StartAsync(string workerPath, CancellationToken cancellationToken)
+    private async Task StartWorkerAsync(CancellationToken cancellationToken)
     {
-        ThrowIfDisposed();
-        this.workerPath = workerPath;
-        Stop();
-        Cache.Clear();
-        PipeName = $"ChromeTaskbar.{Convert.ToHexString(RandomNumberGenerator.GetBytes(16))}";
-        pipe = new NamedPipeServerStream(PipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
-        var nextEpoch = Interlocked.Increment(ref epoch);
-        worker = Process.Start(new ProcessStartInfo(workerPath, $"--pipe \"{PipeName}\" --epoch {nextEpoch}")
+        Process? previous;
+        lock (gate)
         {
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            WindowStyle = ProcessWindowStyle.Hidden,
-        }) ?? throw new InvalidOperationException("Could not start UIA worker.");
-
-        try
-        {
-            await pipe.WaitForConnectionAsync(cancellationToken).ConfigureAwait(false);
-            if (!GetNamedPipeClientProcessId(pipe.SafePipeHandle, out var clientPid) || clientPid != (uint)worker.Id)
-            {
-                throw new Protocol.ProtocolException("Named-pipe client PID does not match the spawned worker.");
-            }
-
-            var hello = await Protocol.ReadFrameAsync(pipe, cancellationToken).ConfigureAwait(false);
-            if (hello.Type != "Hello" || hello.WorkerEpoch != (ulong)nextEpoch)
-            {
-                throw new Protocol.ProtocolException("Worker did not send a matching Hello.");
-            }
-            RecoveryFailed = false;
+            ThrowIfDisposed();
+            previous = worker;
         }
-        catch
+        if (previous is not null)
+            await previous.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+
+        NamedPipeServerStream newPipe;
+        int pid;
+        long nextEpoch;
+        lock (gate)
         {
-            Stop();
-            throw;
+            ThrowIfDisposed();
+            cancellationToken.ThrowIfCancellationRequested();
+            if (previous is not null)
+                Report($"worker exited workerPid={previous.Id} exitCode={previous.ExitCode}");
+            worker?.Dispose();
+            worker = null;
+            var pipeName = $"ChromeTaskbar.{Convert.ToHexString(RandomNumberGenerator.GetBytes(16))}";
+            pipe = newPipe = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+            nextEpoch = Interlocked.Increment(ref epoch);
+            var info = new ProcessStartInfo(workerPath!)
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardError = true,
+            };
+            info.ArgumentList.Add("--pipe");
+            info.ArgumentList.Add(pipeName);
+            info.ArgumentList.Add("--epoch");
+            info.ArgumentList.Add(nextEpoch.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            worker = Process.Start(info) ?? throw new InvalidOperationException("Could not start UIA worker.");
+            pid = worker.Id;
+            Report($"worker started workerPid={pid} epoch={nextEpoch}");
+            worker.ErrorDataReceived += (_, e) =>
+            {
+                if (e.Data is { } line && line.StartsWith(Protocol.WorkerDiagnosticPrefix, StringComparison.Ordinal))
+                    Report(line);
+            };
+            worker.BeginErrorReadLine();
+        }
+
+        await newPipe.WaitForConnectionAsync(cancellationToken).ConfigureAwait(false);
+        if (!GetNamedPipeClientProcessId(newPipe.SafePipeHandle, out var clientPid) || clientPid != (uint)pid)
+            throw new Protocol.ProtocolException("Named-pipe client PID does not match the spawned worker.");
+        var hello = await Protocol.ReadFrameAsync(newPipe, cancellationToken).ConfigureAwait(false);
+        if (hello.Type != "Hello" || hello.WorkerEpoch != (ulong)nextEpoch)
+            throw new Protocol.ProtocolException("Worker did not send a matching Hello.");
+        if (!Protocol.SupportsCaptureControl(hello))
+        {
+            Report($"worker incompatible workerPid={pid} epoch={nextEpoch} reason=missingCaptureControl");
+            throw new Protocol.ProtocolException("UIA worker does not support optional favicon capture.");
         }
     }
 
     /// <summary>Invalidates epoch, cache and tokens, and stops the worker.</summary>
     public void InvalidateEpoch()
     {
-        Interlocked.Increment(ref epoch);
-        Cache.Clear();
-        Stop();
+        lock (gate)
+        {
+            Interlocked.Increment(ref epoch);
+            Cache.Clear();
+            StopWorker();
+        }
     }
 
-    public void Stop()
+    // Keep the process handle until exit is confirmed. Only the process started above may be stopped.
+    private void StopWorker()
     {
+        connected = false;
         pipe?.Dispose(); pipe = null;
         if (worker is { HasExited: false })
         {
-            try { worker.Kill(entireProcessTree: true); }
+            try { worker.Kill(); }
             catch (Exception e) when (e is InvalidOperationException or System.ComponentModel.Win32Exception)
             {
-                // The worker exited (or became inaccessible) between the HasExited check and Kill; it is being discarded anyway.
-                Report($"UIA worker kill skipped: {e.Message}");
+                Report($"worker stop failed workerPid={worker.Id} reason={e.GetType().Name}");
             }
         }
-        worker?.Dispose(); worker = null;
-        PipeName = null;
     }
 
     // ---- bounded request queue -------------------------------------------------
 
     /// <summary>Reads tabs. A newer pending read replaces an older unstarted one (latest hover wins).</summary>
-    public Task<BrokerResult> ReadTabsAsync(WindowKey key, long forPopupGeneration, CancellationToken cancellationToken = default, TimeSpan? deadline = null)
+    public Task<BrokerResult> ReadTabsAsync(WindowKey key, long forPopupGeneration, CancellationToken cancellationToken = default, TimeSpan? deadline = null, TabReadKind kind = TabReadKind.PopupOpen)
     {
         ThrowIfDisposed();
         var due = clock().ToUniversalTime() + (deadline ?? ReadDeadline);
-        return Enqueue(isSelect: false, due, cancellationToken, (sentEpoch, d) => RunReadAsync(key, forPopupGeneration, sentEpoch, d));
+        return Enqueue(isSelect: false, due, cancellationToken, (_, d) => RunReadAsync(key, forPopupGeneration, d, kind, cancellationToken));
     }
 
     /// <summary>Selects a tab; takes priority over pending reads. Stale (non-fresh) snapshots are rejected without a worker call.</summary>
@@ -159,10 +204,10 @@ public sealed class UiaWorkerBroker : IDisposable
         {
             if (disposed) throw new ObjectDisposedException(nameof(UiaWorkerBroker));
             if (isSelect) selects.Enqueue(job); else { replaced = pendingRead; pendingRead = job; }
+            job.Registration = token.Register(() => CancelUnstarted(job));
             if (!pumping) { pumping = start = true; }
         }
-        // Cancel only affects unstarted work; a started job is not interrupted.
-        job.Registration = token.Register(() => CancelUnstarted(job));
+        replaced?.Registration.Dispose();
         replaced?.Completion.TrySetResult(new BrokerResult(ResultStatus.Cancelled));
         if (start) _ = Task.Run(PumpAsync);
         return job.Completion.Task;
@@ -182,7 +227,11 @@ public sealed class UiaWorkerBroker : IDisposable
                 removed = true;
             }
         }
-        if (removed) job.Completion.TrySetResult(new BrokerResult(ResultStatus.Cancelled));
+        if (removed)
+        {
+            job.Registration.Unregister();
+            job.Completion.TrySetResult(new BrokerResult(ResultStatus.Cancelled));
+        }
     }
 
     private async Task PumpAsync()
@@ -221,17 +270,27 @@ public sealed class UiaWorkerBroker : IDisposable
 
     // ---- request execution -----------------------------------------------------
 
-    private async Task<BrokerResult> RunReadAsync(WindowKey key, long forPopup, long sentEpoch, DateTimeOffset deadline)
+    private async Task<BrokerResult> RunReadAsync(WindowKey key, long forPopup, DateTimeOffset deadline, TabReadKind kind, CancellationToken token)
     {
+        var readBudget = deadline - clock().ToUniversalTime();
+        if (readBudget <= TimeSpan.Zero) return Record(new BrokerResult(ResultStatus.Timeout));
+        var (workerStatus, started) = await EnsureWorkerAsync(key, kind).ConfigureAwait(false);
+        if (workerStatus != ResultStatus.Success) return Record(new BrokerResult(workerStatus));
+        if (token.IsCancellationRequested) return new BrokerResult(ResultStatus.Cancelled);
+        if (started) deadline = clock().ToUniversalTime() + readBudget;
+        var sentEpoch = Interlocked.Read(ref epoch);
         var id = (ulong)Interlocked.Increment(ref nextRequestId);
-        var request = Build("ReadTabs", sentEpoch, id, key, deadline, null);
-        var (outcome, reply) = await CallAsync(request, deadline).ConfigureAwait(false);
+        // A recovery probe exercises the tab read without asking Chrome to render.
+        var captureIcons = !recovering && kind is (TabReadKind.PopupOpen or TabReadKind.WindowActivated);
+        var request = Build("ReadTabs", sentEpoch, id, key, deadline, new { captureIcons });
+        var (outcome, reply) = await CallAsync(request, key, deadline, kind).ConfigureAwait(false);
         if (outcome is not null) return Record(outcome);
-        if (IsStale(reply!, sentEpoch, id, key, forPopup)) return new BrokerResult(ResultStatus.Stale);
+        if (!MatchesRequest(reply!, sentEpoch, id)) return new BrokerResult(ResultStatus.Stale);
         try
         {
             var status = ParseStatus(reply!.Payload);
-            if (status != ResultStatus.Success) return Record(new BrokerResult(status));
+            if (status != ResultStatus.Success)
+                return IsCurrentPopup(key, forPopup) ? Record(new BrokerResult(status)) : new BrokerResult(ResultStatus.Stale);
             var p = reply.Payload;
             var tabs = p.GetProperty("tabs").EnumerateArray().Select(t => new TabEntry(
                 new TabToken(t.GetProperty("tabToken").GetString()!), t.GetProperty("title").GetString()!,
@@ -239,7 +298,18 @@ public sealed class UiaWorkerBroker : IDisposable
             var snapshot = new TabSnapshot(new WorkerEpoch(sentEpoch), key, new SnapshotId(p.GetProperty("snapshotId").GetGuid()),
                 DateTimeOffset.Parse(p.GetProperty("capturedAtUtc").GetString()!, null, System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal),
                 TabAvailability.Available, tabs);
-            Cache.Put(snapshot);
+            lock (gate)
+            {
+                if (disposed || epoch != sentEpoch) return new BrokerResult(ResultStatus.Stale);
+                if (recovering)
+                {
+                    backoff.Reset();
+                    recovering = false;
+                    Report($"worker recovered epoch={sentEpoch} requestId={id} chromePid={key.ProcessId}");
+                }
+                if (!IsCurrentPopup(key, forPopup)) return new BrokerResult(ResultStatus.Stale);
+                Cache.Put(snapshot);
+            }
             LastError = null;
             return new BrokerResult(ResultStatus.Success, snapshot);
         }
@@ -258,10 +328,10 @@ public sealed class UiaWorkerBroker : IDisposable
         if (forPopup != PopupGeneration || !isCurrentWindow(key)) return new BrokerResult(ResultStatus.Stale);
 
         var id = (ulong)Interlocked.Increment(ref nextRequestId);
-        var request = Build("SelectTab", sentEpoch, id, key, deadline, new Dictionary<string, string> { ["snapshotId"] = snapshotId.Value.ToString(), ["tabToken"] = token.Value });
-        var (outcome, reply) = await CallAsync(request, deadline).ConfigureAwait(false);
+        var request = Build("SelectTab", sentEpoch, id, key, deadline, new { snapshotId = snapshotId.Value.ToString(), tabToken = token.Value });
+        var (outcome, reply) = await CallAsync(request, key, deadline).ConfigureAwait(false);
         if (outcome is not null) return Record(outcome);
-        if (IsStale(reply!, sentEpoch, id, key, forPopup)) return new BrokerResult(ResultStatus.Stale);
+        if (!MatchesRequest(reply!, sentEpoch, id) || !IsCurrentPopup(key, forPopup)) return new BrokerResult(ResultStatus.Stale);
         try
         {
             var status = ParseStatus(reply!.Payload);
@@ -273,9 +343,10 @@ public sealed class UiaWorkerBroker : IDisposable
         catch (Exception e) when (e is KeyNotFoundException or InvalidOperationException) { return Record(new BrokerResult(ResultStatus.ProtocolError)); }
     }
 
-    private bool IsStale(Protocol.Message reply, long sentEpoch, ulong id, WindowKey key, long forPopup) =>
-        reply.Type != "Result" || reply.RequestId != id || reply.WorkerEpoch != (ulong)sentEpoch || Interlocked.Read(ref epoch) != sentEpoch ||
-        forPopup != PopupGeneration || !isCurrentWindow(key);
+    private bool MatchesRequest(Protocol.Message reply, long sentEpoch, ulong id) =>
+        reply.Type == "Result" && reply.RequestId == id && reply.WorkerEpoch == (ulong)sentEpoch && Interlocked.Read(ref epoch) == sentEpoch;
+
+    private bool IsCurrentPopup(WindowKey key, long forPopup) => forPopup == PopupGeneration && isCurrentWindow(key);
 
     private BrokerResult Record(BrokerResult result)
     {
@@ -283,8 +354,7 @@ public sealed class UiaWorkerBroker : IDisposable
         return result;
     }
 
-    /// <summary>Calls the worker with the deadline. On hang or IO failure, stops/recreates the worker and invalidates epoch/cache/tokens.</summary>
-    private async Task<(BrokerResult? Outcome, Protocol.Message? Reply)> CallAsync(Protocol.Message request, DateTimeOffset deadline)
+    private async Task<(BrokerResult? Outcome, Protocol.Message? Reply)> CallAsync(Protocol.Message request, WindowKey key, DateTimeOffset deadline, TabReadKind? kind = null)
     {
         var remaining = deadline - clock().ToUniversalTime();
         if (remaining <= TimeSpan.Zero) return (new BrokerResult(ResultStatus.Timeout), null);
@@ -292,12 +362,12 @@ public sealed class UiaWorkerBroker : IDisposable
         try
         {
             var call = (injectedCall ?? PipeCallAsync)(request, cts.Token);
-            var winner = await Task.WhenAny(call, Task.Delay(remaining)).ConfigureAwait(false);
+            var winner = await Task.WhenAny(call, Task.Delay(remaining, cts.Token)).ConfigureAwait(false);
             if (winner != call)
             {
-                cts.Cancel();
                 _ = call.ContinueWith(t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
-                await RecoverAsync().ConfigureAwait(false);
+                cts.Cancel();
+                RecordWorkerFailure($"request timed out operation={request.Type} kind={kind} epoch={request.WorkerEpoch} requestId={request.RequestId} chromePid={key.ProcessId}");
                 return (new BrokerResult(ResultStatus.Timeout), null);
             }
             return (null, await call.ConfigureAwait(false));
@@ -305,29 +375,69 @@ public sealed class UiaWorkerBroker : IDisposable
         catch (Exception e) when (e is IOException or ObjectDisposedException or OperationCanceledException or InvalidOperationException)
         {
             if (disposed) return (new BrokerResult(ResultStatus.Cancelled), null);
-            await RecoverAsync().ConfigureAwait(false);
-            return (new BrokerResult(ResultStatus.Failed), null);
+            RecordWorkerFailure($"request failed reason={e.GetType().Name} operation={request.Type} kind={kind} epoch={request.WorkerEpoch} requestId={request.RequestId} chromePid={key.ProcessId}");
+            return (new BrokerResult(e is Protocol.ProtocolException ? ResultStatus.ProtocolError : ResultStatus.Failed), null);
+        }
+        finally { cts.Cancel(); }
+    }
+
+    private async Task<(ResultStatus Status, bool Started)> EnsureWorkerAsync(WindowKey key, TabReadKind kind)
+    {
+        lock (gate)
+        {
+            if (disposed) return (ResultStatus.Cancelled, false);
+            if (recovering && kind is not (TabReadKind.PopupOpen or TabReadKind.Retry)) return (ResultStatus.Unavailable, false);
+            if (connected) return (ResultStatus.Success, false);
+            if (workerPath is null && injectedCall is null) return (ResultStatus.Unavailable, false);
+            if (recovering)
+            {
+                long now = monotonicClock();
+                if ((backoff.Failures >= FailuresBeforeManualRetry && kind != TabReadKind.Retry) || !CanRestart(now))
+                    return (ResultStatus.Unavailable, false);
+                restartAttempts.Enqueue(now);
+            }
+        }
+
+        using var startupDeadline = new CancellationTokenSource(WorkerStartupDeadline);
+        try
+        {
+            if (injectedCall is null) await StartWorkerAsync(startupDeadline.Token).ConfigureAwait(false);
+            else if (injectedRestart is not null) await injectedRestart(startupDeadline.Token).ConfigureAwait(false);
+            lock (gate)
+            {
+                if (disposed) return (ResultStatus.Cancelled, false);
+                connected = true;
+            }
+            return (ResultStatus.Success, true);
+        }
+        catch (Exception e) when (e is IOException or InvalidOperationException or OperationCanceledException or System.ComponentModel.Win32Exception)
+        {
+            if (disposed) return (ResultStatus.Cancelled, false);
+            RecordWorkerFailure($"worker startup failed reason={e.GetType().Name} chromePid={key.ProcessId} kind={kind}");
+            return (e is OperationCanceledException ? ResultStatus.Timeout : ResultStatus.Failed, false);
         }
     }
 
-    private async Task RecoverAsync()
+    // Called under gate. Successful reads reset the backoff, but preserve the rolling restart limit.
+    private bool CanRestart(long now)
     {
-        InvalidateEpoch();
-        if (disposed) return;
-        try
+        while (restartAttempts.TryPeek(out long attempt) && now - attempt >= RestartWindowMs)
+            restartAttempts.Dequeue();
+        return backoff.CanSpawn(now) && restartAttempts.Count < MaxRestartsPerWindow;
+    }
+
+    private void RecordWorkerFailure(string reason)
+    {
+        lock (gate)
         {
-            if (injectedRestart is not null) await injectedRestart(CancellationToken.None).ConfigureAwait(false);
-            else if (workerPath is not null)
-            {
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-                await StartAsync(workerPath, cts.Token).ConfigureAwait(false);
-            }
-            RecoveryFailed = false;
-        }
-        catch (Exception e)
-        {
-            Report($"UiaWorkerBroker: worker recovery failed: {e.GetType().Name}: {e.Message}");
-            RecoveryFailed = true;
+            if (disposed) return;
+            long now = monotonicClock();
+            backoff.RecordFailure(now);
+            recovering = true;
+            Report($"{reason} workerPid={worker?.Id} failures={backoff.Failures} backoffMs={backoff.DueMs - now}");
+            Interlocked.Increment(ref epoch);
+            Cache.Clear();
+            StopWorker();
         }
     }
 
@@ -342,14 +452,14 @@ public sealed class UiaWorkerBroker : IDisposable
         }
     }
 
-    private static Protocol.Message Build(string type, long sentEpoch, ulong id, WindowKey key, DateTimeOffset deadline, Dictionary<string, string>? extra)
+    private static Protocol.Message Build(string type, long sentEpoch, ulong id, WindowKey key, DateTimeOffset deadline, object extra)
     {
         var payload = new Dictionary<string, object>
         {
             ["windowKey"] = new { hwnd = Protocol.SerializeUnsigned((ulong)key.Hwnd), processId = Protocol.SerializeUnsigned((ulong)(uint)key.ProcessId), processStartTimeUtc = Protocol.SerializeUnsigned((ulong)key.ProcessStartTimeTicks), generation = Protocol.SerializeUnsigned((ulong)key.Generation) },
             ["deadlineUtc"] = deadline.ToUniversalTime().ToString("O"),
         };
-        if (extra is not null) foreach (var (k, v) in extra) payload[k] = v;
+        foreach (var property in JsonSerializer.SerializeToElement(extra).EnumerateObject()) payload[property.Name] = property.Value;
         return new Protocol.Message(type, (ulong)sentEpoch, id, JsonSerializer.SerializeToElement(payload));
     }
 
@@ -375,10 +485,12 @@ public sealed class UiaWorkerBroker : IDisposable
             disposed = true;
             abandoned.AddRange(selects); selects.Clear();
             if (pendingRead is not null) { abandoned.Add(pendingRead); pendingRead = null; }
+            StopWorker();
+            worker?.Dispose();
+            worker = null;
+            Cache.Clear();
         }
         foreach (var j in abandoned) { j.Registration.Dispose(); j.Completion.TrySetResult(new BrokerResult(ResultStatus.Cancelled)); }
-        Stop();
-        Cache.Clear();
     }
 
     private void Report(string message)

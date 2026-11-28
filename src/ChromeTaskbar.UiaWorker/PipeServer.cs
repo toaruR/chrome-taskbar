@@ -24,7 +24,7 @@ public sealed class PipeServer : IDisposable
         // The broker owns the (random-named) pipe server and checks this process as its client; connect, do not serve.
         using var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
         await pipe.ConnectAsync(5000, cancellationToken).ConfigureAwait(false);
-        await Protocol.WriteFrameAsync(pipe, Message("Hello", 0, new { protocolVersion = Protocol.Version, workerEpoch = Protocol.SerializeUnsigned((ulong)epoch.Value) }), cancellationToken).ConfigureAwait(false);
+        await Protocol.WriteFrameAsync(pipe, Message("Hello", 0, new { protocolVersion = Protocol.Version, workerEpoch = Protocol.SerializeUnsigned((ulong)epoch.Value), supportsCaptureControl = true }), cancellationToken).ConfigureAwait(false);
         while (!cancellationToken.IsCancellationRequested)
         {
             Protocol.Message request;
@@ -45,14 +45,17 @@ public sealed class PipeServer : IDisposable
             case "ReadTabs":
                 {
                     var key = ParseWindowKey(request.Payload); var deadline = ParseDeadline(request.Payload);
-                    var snapshot = dispatcher.Invoke(provider => provider.ReadTabs(key, deadline));
+                    var diagnostic = new WorkerRequestDiagnostic(key.ProcessId, epoch, request.RequestId);
+                    var snapshot = dispatcher.Invoke(provider => provider.ReadTabs(key, deadline, Protocol.ShouldCaptureIcons(request.Payload), diagnostic));
                     await Protocol.WriteFrameAsync(pipe, Message("Result", request.RequestId, BuildReadTabsPayload(key, snapshot)), cancellationToken).ConfigureAwait(false);
                     return;
                 }
             case "SelectTab":
                 {
                     var key = ParseWindowKey(request.Payload); var deadline = ParseDeadline(request.Payload);
-                    var result = dispatcher.Invoke(provider => provider.Select(key, new SnapshotId(Guid.Parse(request.Payload.GetProperty("snapshotId").GetString()!)), new TabToken(request.Payload.GetProperty("tabToken").GetString()!), deadline));
+                    var diagnostic = new WorkerRequestDiagnostic(key.ProcessId, epoch, request.RequestId);
+                    var result = dispatcher.Invoke(provider => diagnostic.Measure("uia-select",
+                        () => provider.Select(key, new SnapshotId(Guid.Parse(request.Payload.GetProperty("snapshotId").GetString()!)), new TabToken(request.Payload.GetProperty("tabToken").GetString()!), deadline)));
                     await WriteStatusAsync(pipe, request.RequestId, result, cancellationToken).ConfigureAwait(false); return;
                 }
             case "Invalidate":

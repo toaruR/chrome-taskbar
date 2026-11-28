@@ -100,6 +100,11 @@
                             </Style>
                         </TextBlock.Style>
                     </TextBlock>
+                    <TextBlock x:Name="UiaRecoveryStatus" DockPanel.Dock="Top" Margin="8,4,8,6"
+                               FontSize="12" Text="タブの自動取得を一時停止しています" Visibility="Collapsed"/>
+                    <Button x:Name="RetryUiaButton" DockPanel.Dock="Top" Margin="8,0,8,6"
+                            HorizontalAlignment="Left" Focusable="False" Content="タブ取得を再試行"
+                            Visibility="Collapsed" Click="OnRetryUiaClick"/>
                     <ListBox x:Name="TabList" Focusable="False" BorderThickness="0" Background="Transparent"
                              HorizontalContentAlignment="Stretch"
                              VirtualizingPanel.IsVirtualizing="True" ScrollViewer.VerticalScrollBarVisibility="Auto"

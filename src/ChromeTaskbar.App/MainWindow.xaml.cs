@@ -29,11 +29,10 @@ public partial class MainWindow : Window
     [DllImport("user32.dll")] private static extern bool GetCursorPos(out POINT p);
     [StructLayout(LayoutKind.Sequential)] private struct POINT { public int X, Y; }
 
-    private readonly string _workerPath;
     private readonly Win32WindowEnumerator _enumerator = new();
     private readonly WindowRegistry _registry = new(WindowOrderStore.Load(WindowOrderStore.DefaultPath));
     private IReadOnlyList<SavedWindow> _savedOrder = Array.Empty<SavedWindow>();
-    private readonly UiaWorkerBroker _broker = new();
+    private readonly UiaWorkerBroker _broker;
     private readonly HoverController _hover = new();
     private readonly WindowActivator _activator;
     private readonly TaskbarViewModel _vm;
@@ -50,13 +49,14 @@ public partial class MainWindow : Window
     private bool _prevEscape;
     private TabPopupViewModel? _popup;
     private readonly IconRefreshScheduler _iconRefresh = new();
-    private bool _brokerStarted, _iconReadInFlight;
+    private bool _iconReadInFlight;
+    private TabPopupViewModel? _popupReadInFlight;
     private CancellationTokenSource? _popupCts;
 
     public MainWindow(string workerPath)
     {
         InitializeComponent();
-        _workerPath = workerPath;
+        _broker = new UiaWorkerBroker(workerPath);
         _activator = new WindowActivator(_enumerator, new Win32WindowOps());
         _vm = new TaskbarViewModel(_hover, () => MonotonicClock.NowMs, Toggle);
         DataContext = _vm;
@@ -72,11 +72,11 @@ public partial class MainWindow : Window
             if (e.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Add) ScheduleGrowToFit();
         };
         StateChanged += (_, _) => ScheduleGrowToFit();
-        Loaded += async (_, _) => await StartAsync();
+        Loaded += (_, _) => Start();
         Closed += (_, _) => Shutdown();
     }
 
-    private async Task StartAsync()
+    private void Start()
     {
         // Window listing does not depend on UIA: start it even when the worker cannot be launched.
         RefreshWindows();
@@ -88,11 +88,6 @@ public partial class MainWindow : Window
         }
         _mouseHook = SetWindowsHookExW(WH_MOUSE_LL, _mouseProc, GetModuleHandleW(null), 0);
         _timer.Start();
-        try { await _broker.StartAsync(_workerPath, CancellationToken.None); _brokerStarted = true; }
-        catch (Exception ex) when (ex is IOException or InvalidOperationException or System.ComponentModel.Win32Exception or Protocol.ProtocolException)
-        {
-            Title = $"Chrome Taskbar - UIA worker unavailable: {ex.Message}";
-        }
     }
 
     private void OnWinEvent(nint hook, uint ev, nint hwnd, int idObject, int idChild, uint thread, uint time)
@@ -111,7 +106,12 @@ public partial class MainWindow : Window
         if (_popup is not null)
         {
             PollDismissals(now);
-            if (_popup is { } p && _popupRefresh.Poll(now) is not null) _ = LoadPopupAsync(p);
+            if (_popup is { } p)
+            {
+                UpdateUiaRecoveryControls();
+                if (!_broker.IsRecovering && _popupRefresh.Poll(now) is not null)
+                    _ = LoadPopupAsync(p, TabReadKind.PopupRefresh);
+            }
         }
     }
 
@@ -121,16 +121,16 @@ public partial class MainWindow : Window
     /// </summary>
     private void PumpIconRead(long now)
     {
-        if (!_brokerStarted || _iconReadInFlight || _hover.State != HoverState.Idle) return;
+        if (_broker.IsRecovering || _iconReadInFlight || _hover.State != HoverState.Idle) return;
         if (_iconRefresh.Next(_vm.Buttons.Select(b => b.Key).ToList(), now) is not { } key) return;
         _iconRefresh.MarkAttempted(key, now);
         _iconReadInFlight = true;
-        _ = ReadIconAsync(key);
+        _ = ReadIconAsync(key, TabReadKind.Background);
     }
 
-    private async Task ReadIconAsync(WindowKey key)
+    private async Task ReadIconAsync(WindowKey key, TabReadKind kind)
     {
-        try { await _broker.ReadTabsAsync(key, _broker.PopupGeneration); }
+        try { await _broker.ReadTabsAsync(key, _broker.PopupGeneration, kind: kind); }
         catch (ObjectDisposedException) { return; } // broker disposed during shutdown
         finally { _iconReadInFlight = false; }
         RefreshWindows();
@@ -164,7 +164,7 @@ public partial class MainWindow : Window
         var r = _activator.Toggle(key, _lastExternalForeground == key.Hwnd);
         if (!r.IsSuccess && !r.IsPending) Title = $"Chrome Taskbar - {r.Outcome}: {r.Detail}";
         RefreshWindows();
-        if (r.IsSuccess) _ = RecaptureMissingIconAsync(key);
+        if (r.Outcome == ActivationOutcome.Activated) _ = RecaptureMissingIconAsync(key);
     }
 
     /// <summary>
@@ -175,10 +175,10 @@ public partial class MainWindow : Window
     {
         if (_vm.Buttons.FirstOrDefault(b => b.Key == key) is not { Favicon: null }) return;
         await Task.Delay(RecaptureDelayMs);
-        if (_popup is not null || _iconReadInFlight || !_brokerStarted || !_vm.Buttons.Any(b => b.Key == key)) return;
+        if (_popup is not null || _iconReadInFlight || _broker.IsRecovering || !_vm.Buttons.Any(b => b.Key == key)) return;
         _iconRefresh.MarkAttempted(key, MonotonicClock.NowMs);
         _iconReadInFlight = true;
-        await ReadIconAsync(key);
+        await ReadIconAsync(key, TabReadKind.WindowActivated);
     }
 
     private const int RecaptureDelayMs = 500;
@@ -369,7 +369,8 @@ public partial class MainWindow : Window
 
     private async Task PrefetchAsync(HoverEvent e)
     {
-        try { await _broker.ReadTabsAsync(e.Key, e.Generation); }
+        if (_broker.IsRecovering) return;
+        try { await _broker.ReadTabsAsync(e.Key, e.Generation, kind: TabReadKind.HoverPrefetch); }
         catch (ObjectDisposedException) { return; } // broker disposed during shutdown
         RefreshWindows();
     }
@@ -388,15 +389,22 @@ public partial class MainWindow : Window
         TabPopup.IsOpen = true;
         _popupRefresh.Start(e.TickMs);
         ShowPopup(popup);
-        _ = LoadPopupAsync(popup);
+        _ = LoadPopupAsync(popup, TabReadKind.PopupOpen);
     }
 
-    private async Task LoadPopupAsync(TabPopupViewModel popup)
+    private async Task LoadPopupAsync(TabPopupViewModel popup, TabReadKind kind)
     {
+        if (ReferenceEquals(_popupReadInFlight, popup)) return;
+        _popupReadInFlight = popup;
+        UpdateUiaRecoveryControls();
         long id = popup.BeginRequest();
         BrokerResult result;
-        try { result = await _broker.ReadTabsAsync(popup.Key, popup.Generation, _popupCts?.Token ?? CancellationToken.None); }
+        try { result = await _broker.ReadTabsAsync(popup.Key, popup.Generation, _popupCts?.Token ?? CancellationToken.None, kind: kind); }
         catch (ObjectDisposedException) { return; } // broker disposed during shutdown
+        finally
+        {
+            if (ReferenceEquals(_popupReadInFlight, popup)) _popupReadInFlight = null;
+        }
         if (result.Snapshot is { } snapshot && snapshot.WindowKey == popup.Key) _vm.Favicons.Update(snapshot);
         if (ReferenceEquals(_popup, popup) && popup.Apply(id, result)) ShowPopup(popup);
     }
@@ -405,6 +413,20 @@ public partial class MainWindow : Window
     {
         TabList.ItemsSource = popup.Tabs;
         PopupStatus.Text = PopupStatusText.Compose(popup.StatusText, popup.SelectionMessage);
+        UpdateUiaRecoveryControls();
+    }
+
+    private void UpdateUiaRecoveryControls()
+    {
+        bool recovering = _broker.IsRecovering;
+        UiaRecoveryStatus.Visibility = RetryUiaButton.Visibility = recovering ? Visibility.Visible : Visibility.Collapsed;
+        RetryUiaButton.IsEnabled = recovering && !ReferenceEquals(_popupReadInFlight, _popup) && _broker.CanRetry;
+    }
+
+    private async void OnRetryUiaClick(object sender, RoutedEventArgs e)
+    {
+        if (_popup is { } popup && _broker.CanRetry)
+            await LoadPopupAsync(popup, TabReadKind.Retry);
     }
 
     private void ClosePopup()

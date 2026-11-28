@@ -76,7 +76,7 @@ Worker は Chrome が起動する Native Messaging Host ではなく、**本ア�
 | `WindowRegistry` | HWND の検証、ウィンドウの出現・消失、差分反映 |
 | `Win32WindowEnumerator` / `ChromeWindowFilter` | Chrome のトップレベルウィンドウ列挙 |
 | `WindowActivator` | 対象再検証、最小化からの復元、前面化、再クリック時の最小化、結果確認 |
-| `UiaWorkerBroker` | 補助プロセスの起動、IPC、要求期限、停止・再起動。任意の `diagnostics` シンク（既定 `Trace.TraceError`）と `LastDiagnostic` で障害を通知し、シンク例外は握りつぶす |
+| `UiaWorkerBroker` | 初回タブ取得時のワーカー起動、IPC、要求期限、停止・再起動、診断ログ |
 | `ChromeUiaTabProvider` | UIA タブストリップ探索、取得、選択、選択状態確認 |
 | `TabSnapshotCache` | HWND ごとの取得結果、鮮度、失効、最大件数 |
 
@@ -242,6 +242,7 @@ stateDiagram-v2
 | `MaxTitleUnits` | 1024 | units:1023/1024/1025 | 許可/許可/Incomplete | serialize→parse length |
 | `MaxFrameBytes` | 4194304 | bytes:4194303/4194304/4194305 | 許可/Error/Error | frame bytes→parse/切断 |
 | `Backoff` | 1000/5000/30000ms | 各T: T-1/T/T+1 | 待/起動可/起動可 | failure序数/due tick→spawn |
+| 再起動の上限 | 任意の30秒間に2試行 | 3回目の試行 | 先の試行から30秒経過まで待機 | 単調時計・起動試行記録 |
 | `U64Max` | 18446744073709551615 | decimal:T-1/T/T+1 | 許可/許可/Error | parse→最短十進/誤り |
 | `PidMax` | 4294967295 | decimal:T-1/T/T+1 | 許可/許可/Error | parse→serialize/誤り |
 
@@ -263,8 +264,8 @@ UIA はウィンドウを持たない専用 MTA スレッドで実行し、イ�
 
 | 要求・応答 | 内容 |
 |---|---|
-| `Hello` | protocolVersion と WorkerEpoch |
-| `ReadTabs(WindowKey, requestId, deadlineUtc)` | 対象の最新タブスナップショット |
+| `Hello` | protocolVersion、WorkerEpoch、ファビコン取得の制御に対応していること |
+| `ReadTabs(WindowKey, requestId, deadlineUtc, captureIcons?)` | 対象の最新タブスナップショット。既定ではファビコンを撮影しない |
 | `SelectTab(WindowKey, SnapshotId, TabToken, deadlineUtc)` | 対象タブを選択し、結果確認 |
 | `Invalidate(WindowKey)` | 対象終了・世代変更で保持要素を破棄 |
 | `Cancel(requestId)` | まだ実行していない要求を破棄 |
@@ -288,24 +289,30 @@ UIA はウィンドウを持たない専用 MTA スレッドで実行し、イ�
 }
 ```
 
-payload は次で固定する（全 ID は前記整数文字列、時刻は RFC 3339 UTC、`tabToken` は Worker 発行の非空 ASCII base64url）。Worker の最初の送信は `Hello.payload={protocolVersion,workerEpoch}` だけで、メインは一致後に要求を送る。`ReadTabs.payload={windowKey}`、`SelectTab.payload={windowKey,snapshotId,tabToken}`、`Invalidate.payload={windowKey}`、`Cancel.payload={targetRequestId}`。`Result.payload={status,windowKey?,snapshotId?,capturedAtUtc?,availability?,tabs?,messageCode?}` とし、成功 ReadTabs だけが `snapshotId,capturedAtUtc,availability:"Complete",tabs` を含む。各 tab は `{tabToken,title,displayOrder,isSelected,canSelect}`、`displayOrder` はゼロ始まり非重複、`isSelected` は最大一件、`canSelect` は boolean。選択成功は tabs を返さず Success と snapshotId を返す。status は `Success|Stale|Unavailable|Incomplete|WindowGone|ForegroundBlocked|Timeout|Cancelled|ProtocolError`（ワイヤ上の許可値）。実装では Worker は `ForegroundBlocked` を送信せず（前面化の確認は App 側 `WindowActivator` が行う）、App の `ResultStatus` 列挙は `ForegroundBlocked` を持たず内部用の `Failed` を持つ。tabs/title/frame は `MaxTabs`/`MaxTitleUnits`/`MaxFrameBytes` 未満、探索が `TraversalNodes`/`TraversalDepth`/`TraversalTime` 到達なら `Result(Incomplete)` のみで切詰め tabs は返さない。SelectTab は epoch、WindowKey、SnapshotId、TabToken の完全一致が必須、不一致は Stale。Invalidate は冪等で token/要素を破棄し、Cancel は未着手 ReadTabs だけを Cancelled にできる。
+payload は次で固定する（全 ID は前記整数文字列、時刻は RFC 3339 UTC、`tabToken` は Worker 発行の非空 ASCII base64url）。Worker の最初の送信は `Hello.payload={protocolVersion,workerEpoch,supportsCaptureControl:true}`。メインは接続元 PID・epoch・機能対応を確認してから要求を送る。`ReadTabs.payload={windowKey,deadlineUtc,captureIcons?}` の `captureIcons` は省略可能な boolean。`SelectTab.payload={windowKey,deadlineUtc,snapshotId,tabToken}`、`Invalidate.payload={windowKey}`、`Cancel.payload={targetRequestId}`。`Result.payload={status,windowKey?,snapshotId?,capturedAtUtc?,availability?,tabs?,messageCode?}` とし、成功 ReadTabs だけが `snapshotId,capturedAtUtc,availability:"Complete",tabs` を含む。各 tab は `{tabToken,title,displayOrder,isSelected,canSelect}`、`displayOrder` はゼロ始まり非重複、`isSelected` は最大一件、`canSelect` は boolean。選択成功は tabs を返さず Success と snapshotId を返す。status は `Success|Stale|Unavailable|Incomplete|WindowGone|ForegroundBlocked|Timeout|Cancelled|ProtocolError`（ワイヤ上の許可値）。実装では Worker は `ForegroundBlocked` を送信せず（前面化の確認は App 側 `WindowActivator` が行う）、App の `ResultStatus` 列挙は `ForegroundBlocked` を持たず内部用の `Failed` を持つ。tabs/title/frame は `MaxTabs`/`MaxTitleUnits`/`MaxFrameBytes` 未満、探索が `TraversalNodes`/`TraversalDepth`/`TraversalTime` 到達なら `Result(Incomplete)` のみで切詰め tabs は返さない。SelectTab は epoch、WindowKey、SnapshotId、TabToken の完全一致が必須、不一致は Stale。Invalidate は冪等で token/要素を破棄し、Cancel は未着手 ReadTabs だけを Cancelled にできる。
 
 メインは epoch が異なる `Result`、照合不能な requestId、期限後に届いた成功、現在の WindowGeneration と異なる応答を破棄する。破棄はエラー表示を上書きせず、現在のポップアップを開き直さない。Worker 側で WindowKey を検証できない場合は `WindowGone`、UIA 要素/パターンを確認できない場合は `Unavailable`、前面化の確認が失敗した選択は `ForegroundBlocked`、内部期限切れは `Timeout` を返す。`Success` は選択状態の読み戻しまで成功した場合だけである。
 
 | 失敗条件 | 検出 | 防御 | UI 結果 |
 |---|---|---|---|
-| 壊れた/不正な IPC | frame 検証 | 切断し Worker を再生成 | 再接続中 |
+| 壊れた/不正な IPC | frame 検証 | Worker を停止して再試行を待機 | タブの自動取得を一時停止 |
 | UIA 探索上限 | `TraversalNodes` / `TraversalDepth` / `TraversalTime` | 部分一覧を破棄 | 完全な一覧を取得できません |
-| Worker ハング | 要求期限 | Worker を停止、epoch/token を失効 | 再接続中 |
+| Worker ハング | 要求期限 | Worker を停止、epoch/token/cache を失効 | タブの自動取得を一時停止 |
 | 古い応答 | epoch/request/generation/期限照合 | UI へ適用しない | 現在表示を維持 |
 | 対象消失 | WindowKey/要素再検証 | 選択せず token を破棄 | 一覧が更新されました |
 | 前面化失敗 | HWND 前面照合 | Select を送らない | Chrome を前面にできません |
 
 ### ハング・回復
 
-期限は `ReadDeadline`/`SelectDeadline`。同期 UIA は中断不能とみなし、期限後は Worker を停止・再生成する。Job Object は本アプリ Worker のみを管理し、再生成時は epoch/token/cache を失効する。`Backoff` 後も回復しなければ再試行ボタンを出す。有界キューは古い hover 読取を最新へ置換し Select を優先する。取消は UI 適用を止めるだけで、開始済み選択は自動再送しない。
+`ReadDeadline` または `SelectDeadline` を超えた場合や IPC が切れた場合は、ブローカーが起動した Worker を停止し、epoch・トークン・キャッシュを失効する。旧 Worker の終了確認、起動、`Hello` の照合には最大5秒を割り当てる。待ち行列で残ったタブ取得の時間枠は起動後に適用する。
 
-UIA 障害はタブ機能へ隔離し、Win32 の一覧・ウィンドウ切り替えは継続する。ただし、この縮退動作を「全要件を満たした」とは判定しない。
+連続した障害の後は 1秒、5秒、30秒の順に待機する。起動の試行は任意の30秒間に2回まで。停止中はバックグラウンド取得、ホバーの先読み、ポップアップの定期更新、ウィンドウ切り替え後のアイコン取得を休止する。待機が終わればポップアップを開き直すか「タブ取得を再試行」で再開できる。3回連続で失敗した後はボタン操作で再試行する。タブの読み取りが成功した時点で待機時間をリセットし、30秒間の起動試行記録は残す。
+
+バックグラウンド、先読み、ポップアップの定期更新と復旧時の読み取りでは UIA でタブ情報を取得し、アイコンはキャッシュまたはタイトル由来の代替表示を使う。ポップアップを開いたときと、ウィンドウを前面化した直後にアイコンが無いときだけ `PrintWindow` を許可する。
+
+Win32 のウィンドウ一覧と切り替えは UIA の状態にかかわらず動く。有界キューでは最新の未処理の読み取りを保持し、選択を優先する。開始済みのタブ選択は自動再送しない。
+
+診断ログの場所は `%LOCALAPPDATA%\ChromeTaskbar\uia.log`。ワーカーの起動、失敗理由、UIA と `PrintWindow` の開始・終了を UTC 時刻、PID、epoch、要求 ID で照合できる。ログは約1 MiBで `uia.log.1` に切り替わり、タブのタイトルや URL は記録しない。
 
 ## 11. 実装前 PoC と受け入れ条件
 

@@ -16,6 +16,9 @@ public static class FaviconCapture
 
     /// <summary>One icon (or null) per screen rectangle, in order. All null for a minimized window or a failed capture.</summary>
     public static TabIcon?[] TryCapture(nint hwnd, IReadOnlyList<System.Windows.Rect> tabs)
+        => TryCapture(hwnd, tabs, null);
+
+    internal static TabIcon?[] TryCapture(nint hwnd, IReadOnlyList<System.Windows.Rect> tabs, WorkerRequestDiagnostic? diagnostic)
     {
         var icons = new TabIcon?[tabs.Count];
         try
@@ -40,7 +43,7 @@ public static class FaviconCapture
                 width = Math.Max(width, l + w); height = Math.Max(height, t + h);
             }
             if (width == 0 || width > MaxCaptureSide || height > MaxCaptureSide) return icons;
-            var pixels = Capture(hwnd, width, height);
+            var pixels = Capture(hwnd, width, height, diagnostic);
             if (pixels is null) return icons;
             int budget = Protocol.MaxIconBytesPerFrame;
             for (int i = 0; i < tabs.Count && budget > 0; i++)
@@ -119,7 +122,7 @@ public static class FaviconCapture
         Math.Abs((a & 0xFF) - (b & 0xFF)) + Math.Abs((a >> 8 & 0xFF) - (b >> 8 & 0xFF)) + Math.Abs((a >> 16 & 0xFF) - (b >> 16 & 0xFF));
 
     /// <summary>Renders the window's top-left <paramref name="width"/> x <paramref name="height"/> into a top-down 32bpp DIB.</summary>
-    private static byte[]? Capture(nint hwnd, int width, int height)
+    private static byte[]? Capture(nint hwnd, int width, int height, WorkerRequestDiagnostic? diagnostic)
     {
         nint screen = GetDC(0), mem = CreateCompatibleDC(screen), bits;
         var info = new BITMAPINFOHEADER { biSize = Marshal.SizeOf<BITMAPINFOHEADER>(), biWidth = width, biHeight = -height, biPlanes = 1, biBitCount = 32 };
@@ -131,7 +134,8 @@ public static class FaviconCapture
             nint old = SelectObject(mem, bitmap);
             try
             {
-                if (!PrintWindow(hwnd, mem, PwRenderFullContent)) return null;
+                bool DrawWindow() => PrintWindow(hwnd, mem, PwRenderFullContent);
+                if (!(diagnostic?.Measure("PrintWindow", DrawWindow) ?? DrawWindow())) return null;
                 GdiFlush();
                 var buffer = new byte[width * height * 4];
                 Marshal.Copy(bits, buffer, 0, buffer.Length);

@@ -453,7 +453,7 @@ public class AcceptanceBoundaryTests
     }
 
     [Fact]
-    public async Task Hung_worker_restart_invalidates_tokens_before_any_select_is_sent()
+    public async Task Hung_worker_invalidates_tokens_before_restart_can_be_attempted()
     {
         var calls = new List<Protocol.Message>(); var hang = false; var restarts = 0;
         using var broker = new UiaWorkerBroker((m, _) =>
@@ -465,7 +465,7 @@ public class AcceptanceBoundaryTests
         var seed = await broker.ReadTabsAsync(K(1), 0);
         hang = true;
         Assert.Equal(ResultStatus.Timeout, (await broker.ReadTabsAsync(K(2), 0, deadline: TimeSpan.FromMilliseconds(50))).Status);
-        Assert.Equal(1, restarts);
+        Assert.Equal(0, restarts);
         hang = false;
         var r = await broker.SelectTabAsync(K(1), seed.Snapshot!.SnapshotId, new TabToken("tok"), 0);
         Assert.Equal(ResultStatus.Stale, r.Status);
